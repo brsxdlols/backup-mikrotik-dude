@@ -173,6 +173,53 @@ ui_select_device(){
  fi
  SELECTED_DEVICE="$answer"
 }
+ui_remove_client(){
+ local id file
+ if ! select_client; then return; fi
+ id="$SELECTED_CLIENT"
+ if find "$BASE/clientes/$id" -maxdepth 1 -type f -name '*.json' ! -name telegram.json | grep -q .; then
+   ui_message "O cliente $id possui equipamentos cadastrados. Remova os equipamentos antes de excluir o cliente. Nenhum dado foi alterado."
+   return
+ fi
+ if ! dialog --backtitle 'BACKUP MANAGER V3 BETA' --title 'CONFIRMAR EXCLUSAO' --defaultno --yes-label 'Remover' --no-label 'Cancelar' --yesno "Deseja realmente remover o cadastro do cliente $id?\n\nOs backups armazenados NAO serao apagados." 12 72; then return; fi
+ file="$BASE/clientes/$id/telegram.json"
+ if [[ -f "$file" ]]; then rm -f -- "$file"; fi
+ if rmdir -- "$BASE/clientes/$id" 2>/dev/null; then
+   ui_message "Cliente $id removido. Backups preservados."
+ else
+   ui_message "Nao foi possivel remover $id: existem outros arquivos no diretorio. Nenhum outro arquivo foi apagado."
+ fi
+}
+ui_manage_clients(){
+ local choice
+ while :; do
+   choice=$(dialog --stdout --backtitle 'BACKUP MANAGER V3 BETA' --title 'GERENCIAR CLIENTES' --cancel-label 'Voltar' --menu 'Escolha uma operacao:' 16 72 8 \
+     1 'Visualizar clientes cadastrados' \
+     2 'Adicionar cliente' \
+     3 'Remover cliente' \
+     0 'Voltar') || return
+   case "$choice" in
+     1) ui_client_list;;
+     2) clear; add_client; read -r -p 'Pressione ENTER para continuar...' || true;;
+     3) ui_remove_client;;
+     0) return;;
+   esac
+ done
+}
+ui_client_list(){
+ local -a rows=()
+ local id count status
+ while IFS= read -r id; do
+   [[ -n "$id" ]] || continue
+   count=$(find "$BASE/clientes/$id" -maxdepth 1 -type f -name '*.json' ! -name telegram.json | wc -l)
+   status='Telegram pendente'
+   if [[ -f "$BASE/clientes/$id/telegram.json" ]] && jq -e '(.token // "") != "" and (.chat // "") != ""' "$BASE/clientes/$id/telegram.json" >/dev/null 2>&1; then status='Telegram OK'; fi
+   rows+=("$id" "$count equipamento(s) - $status")
+ done < <(list_clients)
+ if (( ${#rows[@]} == 0 )); then ui_message 'Nenhum cliente cadastrado.'; else
+   dialog --backtitle 'BACKUP MANAGER V3 BETA' --title 'CLIENTES CADASTRADOS' --ok-label 'Voltar' --menu 'Clientes e status:' 18 80 12 "${rows[@]}" || true
+ fi
+}
 ui_menu(){
  local choice c d log
  while :; do
@@ -184,20 +231,7 @@ ui_menu(){
      5 'Consultar logs' \
      0 'Sair') || break
    case "$choice" in
-     1)
-       local -a rows=()
-       local id count status
-       while IFS= read -r id; do
-         [[ -n "$id" ]] || continue
-         count=$(find "$BASE/clientes/$id" -maxdepth 1 -type f -name '*.json' ! -name telegram.json | wc -l)
-         status='Telegram pendente'
-         if [[ -f "$BASE/clientes/$id/telegram.json" ]] && jq -e '(.token // "") != "" and (.chat // "") != ""' "$BASE/clientes/$id/telegram.json" >/dev/null 2>&1; then status='Telegram OK'; fi
-         rows+=("$id" "$count equipamento(s) - $status")
-       done < <(list_clients)
-       if (( ${#rows[@]} == 0 )); then ui_message 'Nenhum cliente cadastrado.'; else
-         dialog --backtitle 'BACKUP MANAGER V3 BETA' --title 'CLIENTES CADASTRADOS' --ok-label 'Voltar' --menu 'Clientes e status:' 18 80 12 "${rows[@]}" || true
-       fi
-       ;;
+     1) ui_manage_clients       ;;
      2|3)
        clear
        if [[ "$choice" == 2 ]]; then add_client; else add_device; fi
