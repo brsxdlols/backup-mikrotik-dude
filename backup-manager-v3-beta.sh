@@ -57,6 +57,12 @@ select_client(){
  local i choice
  mapfile -t clients < <(list_clients)
  if (( ${#clients[@]} == 0 )); then echo 'Nenhum cliente cadastrado.'; return 1; fi
+ if (( HAS_DIALOG )); then
+   local -a choices=()
+   for i in "${clients[@]}"; do choices+=("$i" 'Selecionar cliente'); done
+   SELECTED_CLIENT=$(dialog --stdout --backtitle 'BACKUP MANAGER V3 BETA' --title 'SELECIONAR CLIENTE' --menu 'Escolha pelas setas e ENTER:' 18 75 12 "${choices[@]}") || return 1
+   return 0
+ fi
  echo
  echo '========== SELECIONAR CLIENTE =========='
  for i in "${!clients[@]}"; do printf '[%d] %s\n' "$((i+1))" "${clients[i]}"; done
@@ -141,7 +147,84 @@ run_backup(){
  if ! notify "$client" "🔴 BACKUP FALHOU | Cliente: $client | Equipamento: $name | IP: $ip | Porta: $port | Etapa: $step | Motivo: $reason | $(date -Is)"; then echo "$(date -Is) AVISO Falha ao notificar Telegram $client/$name" >> "$BASE/logs/execucoes.log"; fi
  echo "Falha: $reason (etapa $step)"; rm -rf -- "$temp"; return 1
 }
+# Interface interativa dialog (fallback automatico para terminal simples).
+HAS_DIALOG=0
+if [[ -t 0 && -t 1 ]] && command -v dialog >/dev/null 2>&1; then HAS_DIALOG=1; fi
+ui_message(){
+ if (( HAS_DIALOG )); then dialog --backtitle 'BACKUP MANAGER V3 BETA' --title 'Aviso' --msgbox "$1" 9 65; else printf '%s\n' "$1"; fi
+}
+ui_select_device(){
+ local client="$1" f id answer
+ local -a items=()
+ for f in "$BASE/clientes/$client/"*.json; do
+   [[ -f "$f" && "${f##*/}" != 'telegram.json' ]] || continue
+   id="${f##*/}"; id="${id%.json}"
+   items+=("$id" "$(jq -r '.ip // "sem IP"' "$f" 2>/dev/null)")
+ done
+ if (( ${#items[@]} == 0 )); then ui_message 'Nenhum equipamento cadastrado neste cliente.'; return 1; fi
+ if (( HAS_DIALOG )); then
+   answer=$(dialog --stdout --backtitle 'BACKUP MANAGER V3 BETA' --title "Equipamentos - $client" --menu 'Selecione o equipamento:' 18 75 10 "${items[@]}") || return 1
+ else
+   local n=0 choice
+   for ((n=0;n<${#items[@]};n+=2)); do printf '[%d] %s - %s\n' "$((n/2+1))" "${items[n]}" "${items[n+1]}"; done
+   read -r -p 'Numero do equipamento (0 cancela): ' choice
+   [[ "$choice" =~ ^[0-9]+$ ]] && ((choice>=1 && choice<=${#items[@]}/2)) || return 1
+   answer="${items[(choice-1)*2]}"
+ fi
+ SELECTED_DEVICE="$answer"
+}
+ui_menu(){
+ local choice c d log
+ while :; do
+   choice=$(dialog --stdout --backtitle 'BACKUP MANAGER V3 BETA - MULTICLIENTE' --title 'MENU PRINCIPAL' --cancel-label 'Sair' --menu 'Use as setas e ENTER para selecionar:' 18 76 10 \
+     1 'Clientes cadastrados' \
+     2 'Adicionar cliente' \
+     3 'Adicionar MikroTik' \
+     4 'Executar backup manual' \
+     5 'Consultar logs' \
+     0 'Sair') || break
+   case "$choice" in
+     1)
+       local -a rows=()
+       local id count status
+       while IFS= read -r id; do
+         [[ -n "$id" ]] || continue
+         count=$(find "$BASE/clientes/$id" -maxdepth 1 -type f -name '*.json' ! -name telegram.json | wc -l)
+         status='Telegram pendente'
+         if [[ -f "$BASE/clientes/$id/telegram.json" ]] && jq -e '(.token // "") != "" and (.chat // "") != ""' "$BASE/clientes/$id/telegram.json" >/dev/null 2>&1; then status='Telegram OK'; fi
+         rows+=("$id" "$count equipamento(s) - $status")
+       done < <(list_clients)
+       if (( ${#rows[@]} == 0 )); then ui_message 'Nenhum cliente cadastrado.'; else
+         dialog --backtitle 'BACKUP MANAGER V3 BETA' --title 'CLIENTES CADASTRADOS' --ok-label 'Voltar' --menu 'Clientes e status:' 18 80 12 "${rows[@]}" || true
+       fi
+       ;;
+     2|3)
+       clear
+       if [[ "$choice" == 2 ]]; then add_client; else add_device; fi
+       read -r -p 'Pressione ENTER para continuar...' || true
+       ;;
+     4)
+       if select_client; then
+         c="$SELECTED_CLIENT"
+         if ui_select_device "$c"; then
+           d="$SELECTED_DEVICE"
+           clear
+           run_backup "$c" "$d" || true
+           read -r -p 'Pressione ENTER para continuar...' || true
+         fi
+       fi
+       ;;
+     5)
+       log=$(tail -n 30 "$BASE/logs/execucoes.log" 2>/dev/null || true)
+       dialog --backtitle 'BACKUP MANAGER V3 BETA' --title 'ULTIMAS EXECUCOES' --msgbox "${log:-Nenhuma execucao registrada.}" 22 95
+       ;;
+     0) break;;
+   esac
+ done
+ clear
+}
 menu(){
+ if (( HAS_DIALOG )); then ui_menu; return; fi
  local opt c d
  while :; do
    echo
