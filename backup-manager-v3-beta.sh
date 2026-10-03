@@ -21,11 +21,30 @@ add_client(){
  echo "Cliente $id criado"
 }
 list_clients(){ find "$BASE/clientes" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort; }
+select_client(){
+ local -a clients=()
+ local i choice
+ mapfile -t clients < <(list_clients)
+ if (( ${#clients[@]} == 0 )); then echo 'Nenhum cliente cadastrado.'; return 1; fi
+ echo
+ echo '========== SELECIONAR CLIENTE =========='
+ for i in "${!clients[@]}"; do printf '[%d] %s\n' "$((i+1))" "${clients[i]}"; done
+ echo '[0] Voltar'
+ echo '========================================'
+ while :; do
+   read -r -p 'Escolha o numero: ' choice
+   [[ "$choice" == 0 ]] && return 1
+   if [[ "$choice" =~ ^[0-9]+$ ]] && (( 10#$choice >= 1 && 10#$choice <= ${#clients[@]} )); then
+     SELECTED_CLIENT="${clients[10#$choice-1]}"
+     return 0
+   fi
+   echo 'Opcao invalida. Selecione um numero da lista.'
+ done
+}
 add_device(){
  local id name ip port username password type file
- list_clients
- read -r -p 'Cliente: ' id
- valid_id "$id" && [[ -d "$BASE/clientes/$id" ]] || { echo 'Cliente inexistente'; return; }
+ select_client || return
+ id="$SELECTED_CLIENT"
  read -r -p 'Nome do dispositivo: ' name
  valid_id "$name" || { echo 'Nome invalido'; return; }
  file="$BASE/clientes/$id/$name.json"
@@ -41,7 +60,15 @@ add_device(){
      if ((rc==0)) && [[ "$result" == *OK* ]]; then echo 'Conexao OK'; break; fi
      echo "Falha na conexao (codigo $rc). Verifique IP, porta, SSH e autenticacao."
    else echo 'IP, usuario ou porta invalidos'; fi
-   echo '1) Tentar mesmos dados  2) Alterar IP  3) Alterar usuario  4) Alterar senha  5) Alterar porta  0) Cancelar'
+   echo
+   echo '========== FALHA DE CONEXAO =========='
+   echo '[1] Tentar novamente com os mesmos dados'
+   echo '[2] Alterar IP'
+   echo '[3] Alterar usuario'
+   echo '[4] Alterar senha'
+   echo '[5] Alterar porta SSH'
+   echo '[0] Cancelar cadastro'
+   echo '======================================'
    read -r -p 'Opcao: ' opt
    case "$opt" in
      1) ;; 2) read -r -p 'Novo IP: ' ip;; 3) read -r -p 'Novo usuario: ' username;; 4) read_secret password;; 5) read -r -p 'Nova porta: ' port;; 0) return;; *) echo 'Opcao invalida';;
@@ -84,12 +111,29 @@ run_backup(){
  echo "Falha: $reason (etapa $step)"; rm -rf -- "$temp"; return 1
 }
 menu(){
+ local opt c d
  while :; do
- echo; echo '=== BACKUP MANAGER V3 BETA ==='; echo '1) Listar clientes  2) Adicionar cliente  3) Adicionar MikroTik  4) Backup manual  5) Ver logs  0) Sair'
- read -r -p 'Opcao: ' opt
- case "$opt" in
-  1) list_clients;; 2) add_client;; 3) add_device;; 4) read -r -p 'Cliente: ' c; read -r -p 'Dispositivo: ' d; run_backup "$c" "$d" || true;; 5) tail -n 30 "$BASE/logs/execucoes.log" 2>/dev/null || :;; 0) break;; *) echo 'Opcao invalida';;
- esac
+   echo
+   echo '========================================'
+   echo '       BACKUP MANAGER V3 BETA'
+   echo '========================================'
+   echo '[1] Listar clientes'
+   echo '[2] Adicionar cliente'
+   echo '[3] Adicionar MikroTik'
+   echo '[4] Executar backup manual'
+   echo '[5] Consultar logs'
+   echo '[0] Sair'
+   echo '========================================'
+   read -r -p 'Escolha uma opcao: ' opt
+   case "$opt" in
+     1) list_clients;;
+     2) add_client;;
+     3) add_device;;
+     4) select_client || continue; c="$SELECTED_CLIENT"; read -r -p 'Nome do dispositivo: ' d; run_backup "$c" "$d" || true;;
+     5) tail -n 30 "$BASE/logs/execucoes.log" 2>/dev/null || echo 'Nenhum log ainda.';;
+     0) break;;
+     *) echo 'Opcao invalida';;
+   esac
  done
 }
 case "${1:-menu}" in menu) menu;; run) [[ $# == 3 ]] || exit 2; run_backup "$2" "$3";; *) echo 'Uso: bash backup-manager-v3-beta.sh [menu|run CLIENTE DISPOSITIVO]'; exit 2;; esac
