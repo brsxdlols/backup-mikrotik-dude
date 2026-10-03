@@ -21,6 +21,37 @@ add_client(){
  echo "Cliente $id criado"
 }
 list_clients(){ find "$BASE/clientes" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort; }
+show_clients(){
+ local -a clients=()
+ local i id count status token chat
+ mapfile -t clients < <(list_clients)
+ echo
+ echo '=============================================================='
+ echo '                  BACKUP MANAGER V3 - CLIENTES'
+ echo '=============================================================='
+ printf ' %-4s %-22s %-13s %s\n' 'N' 'CLIENTE' 'EQUIPAMENTOS' 'TELEGRAM'
+ echo '--------------------------------------------------------------'
+ if (( ${#clients[@]} == 0 )); then
+   echo ' Nenhum cliente cadastrado.'
+ else
+   for i in "${!clients[@]}"; do
+     id="${clients[i]}"
+     count=$(find "$BASE/clientes/$id" -maxdepth 1 -type f -name '*.json' ! -name 'telegram.json' | wc -l)
+     status='Nao configurado'
+     if [[ -f "$BASE/clientes/$id/telegram.json" ]]; then
+       token=$(jq -r '.token // ""' "$BASE/clientes/$id/telegram.json" 2>/dev/null || true)
+       chat=$(jq -r '.chat // ""' "$BASE/clientes/$id/telegram.json" 2>/dev/null || true)
+       if [[ -n "$token" && -n "$chat" ]]; then status='Configurado'; fi
+     fi
+     printf ' %-4d %-22.22s %-13s %s\n' "$((i+1))" "$id" "$count" "$status"
+   done
+ fi
+ echo '--------------------------------------------------------------'
+ printf ' Total de clientes: %d\n' "${#clients[@]}"
+ echo '=============================================================='
+ echo '[ENTER] Voltar ao menu principal'
+ read -r
+}
 select_client(){
  local -a clients=()
  local i choice
@@ -126,7 +157,7 @@ menu(){
    echo '========================================'
    read -r -p 'Escolha uma opcao: ' opt
    case "$opt" in
-     1) list_clients;;
+     1) show_clients;;
      2) add_client;;
      3) add_device;;
      4) select_client || continue; c="$SELECTED_CLIENT"; read -r -p 'Nome do dispositivo: ' d; run_backup "$c" "$d" || true;;
