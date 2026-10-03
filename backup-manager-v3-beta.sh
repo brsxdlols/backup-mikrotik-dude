@@ -9,16 +9,45 @@ for x in ssh sshpass scp curl jq flock tar; do need "$x"; done
 valid_id(){ [[ "$1" =~ ^[a-zA-Z0-9_-]+$ ]]; }
 read_secret(){ local var="$1"; read -r -s -p 'Senha (oculta): ' "$var"; echo; }
 add_client(){
- local id token chat
- read -r -p 'Identificador do cliente (letras/numeros/-/_): ' id
- valid_id "$id" || { echo 'Identificador invalido'; return; }
- [[ ! -e "$BASE/clientes/$id" ]] || { echo 'Cliente ja existe'; return; }
- mkdir -m 700 "$BASE/clientes/$id"
- read -r -p 'Bot Token Telegram (vazio para configurar depois): ' token
- read -r -p 'Chat ID Telegram: ' chat
- jq -n --arg token "$token" --arg chat "$chat" '{token:$token,chat:$chat}' > "$BASE/clientes/$id/telegram.json"
+ local id token chat result tmp
+ if (( HAS_DIALOG )); then
+   tmp=$(mktemp "$BASE/tmp/client-form.XXXXXXXX") || return 1
+   chmod 600 "$tmp"
+   # O token fica mascarado durante a digitacao.
+   if ! dialog --backtitle 'BACKUP MANAGER V3 BETA' --title 'CADASTRAR CLIENTE' \
+     --ok-label 'Proximo' --cancel-label 'Cancelar' \
+     --inputbox 'Identificador do cliente (letras, numeros, - ou _):' 10 70 2>"$tmp"; then rm -f "$tmp"; return 0; fi
+   id=$(cat "$tmp")
+   if ! valid_id "$id"; then rm -f "$tmp"; ui_message 'Identificador invalido. Use apenas letras, numeros, - ou _.'; return 0; fi
+   if [[ -e "$BASE/clientes/$id" ]]; then rm -f "$tmp"; ui_message "O cliente $id ja existe."; return 0; fi
+   if ! dialog --backtitle 'BACKUP MANAGER V3 BETA' --title "TELEGRAM - $id" \
+     --ok-label 'Proximo' --cancel-label 'Cancelar' \
+     --insecure --passwordbox 'Bot Token Telegram (pode deixar vazio):' 10 76 2>"$tmp"; then rm -f "$tmp"; return 0; fi
+   token=$(cat "$tmp")
+   if ! dialog --backtitle 'BACKUP MANAGER V3 BETA' --title "TELEGRAM - $id" \
+     --ok-label 'Revisar' --cancel-label 'Cancelar' \
+     --inputbox 'Chat ID Telegram (pode deixar vazio):' 10 76 2>"$tmp"; then rm -f "$tmp"; return 0; fi
+   chat=$(cat "$tmp")
+   rm -f "$tmp"
+   if ! dialog --backtitle 'BACKUP MANAGER V3 BETA' --title 'CONFIRMAR CADASTRO' \
+     --yes-label 'Salvar' --no-label 'Cancelar' \
+     --yesno "Cliente: $id\nTelegram: $([[ -n "$token" && -n "$chat" ]] && echo 'Configurado' || echo 'Pendente')\n\nDeseja salvar o cadastro?" 12 70; then return 0; fi
+ else
+   read -r -p 'Identificador do cliente (letras/numeros/-/_): ' id
+   valid_id "$id" || { echo 'Identificador invalido'; return; }
+   [[ ! -e "$BASE/clientes/$id" ]] || { echo 'Cliente ja existe'; return; }
+   read -r -s -p 'Bot Token Telegram (oculto; vazio para depois): ' token; echo
+   read -r -p 'Chat ID Telegram: ' chat
+ fi
+ mkdir -m 700 "$BASE/clientes/$id" || return 1
+ if ! jq -n --arg token "$token" --arg chat "$chat" '{token:$token,chat:$chat}' > "$BASE/clientes/$id/telegram.json"; then
+   rm -f "$BASE/clientes/$id/telegram.json"
+   rmdir "$BASE/clientes/$id" || true
+   ui_message 'Erro ao salvar configuracao Telegram.'
+   return 1
+ fi
  chmod 600 "$BASE/clientes/$id/telegram.json"
- echo "Cliente $id criado"
+ ui_message "Cliente $id cadastrado com sucesso."
 }
 list_clients(){ find "$BASE/clientes" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort; }
 show_clients(){
@@ -200,7 +229,7 @@ ui_manage_clients(){
      0 'Voltar') || return
    case "$choice" in
      1) ui_client_list;;
-     2) clear; add_client; read -r -p 'Pressione ENTER para continuar...' || true;;
+     2) add_client;;
      3) ui_remove_client;;
      0) return;;
    esac
@@ -233,9 +262,13 @@ ui_menu(){
    case "$choice" in
      1) ui_manage_clients       ;;
      2|3)
-       clear
-       if [[ "$choice" == 2 ]]; then add_client; else add_device; fi
-       read -r -p 'Pressione ENTER para continuar...' || true
+       if [[ "$choice" == 2 ]]; then
+         add_client
+       else
+         clear
+         add_device
+         read -r -p 'Pressione ENTER para continuar...' || true
+       fi
        ;;
      4)
        if select_client; then
