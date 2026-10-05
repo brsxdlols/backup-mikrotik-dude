@@ -513,7 +513,7 @@ add_device_skip_select(){
  read -r -s -p "Senha SSH [0 cancela]: " password; echo; [[ "$password" == 0 ]] && return
  while :; do
   result=$(SSHPASS="$password" sshpass -e ssh -o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -p "$port" -- "$username@$ip" ':put "OK"' 2>&1) && rc=0 || rc=$?
-  if ((rc==0)) && [[ "$result" == *OK* ]]; then jq -n --arg name "$name" --arg ip "$ip" --arg port "$port" --arg username "$username" --arg password "$password" '{name:$name,ip:$ip,port:$port,username:$username,password:$password,type:"mikrotik"}' > "$file"; chmod 600 "$file"; echo "MikroTik $name cadastrado com sucesso em $id."; return 0; fi
+  if ((rc==0)) && [[ "$result" == *OK* ]]; then jq -n --arg name "$name" --arg ip "$ip" --arg port "$port" --arg username "$username" --arg password "$password" '{name:$name,ip:$ip,port:$port,username:$username,password:$password,type:"mikrotik"}' > "$file"; chmod 600 "$file"; status_ok "MikroTik $name cadastrado com sucesso em $id."; echo; status_info "Executando primeiro backup para validar o equipamento..."; if run_backup "$id" "$name"; then status_ok "Cadastro validado e primeiro backup concluido."; else status_fail "Equipamento cadastrado, mas o primeiro backup falhou. O cadastro foi mantido para correcao."; fi; return 0; fi
   echo; echo "Falha na conexao (codigo $rc):"; printf "%s\n" "$result"
   echo; echo "[1] Tentar novamente"; echo "[2] Alterar IP/hostname"; echo "[3] Alterar porta SSH"; echo "[4] Alterar usuario"; echo "[5] Alterar senha"; echo "[0] Cancelar cadastro"
   read_key opt "Opcao: "
