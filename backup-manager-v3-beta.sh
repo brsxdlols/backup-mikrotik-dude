@@ -294,7 +294,22 @@ ui_client_list(){
    dialog --backtitle 'BACKUP MANAGER V3 BETA' --title 'CLIENTES CADASTRADOS' --ok-label 'Voltar' --menu 'Clientes e status:' 18 80 12 "${rows[@]}" || true
  fi
 }
-ui_edit_client(){
+ui_test_client_telegram(){
+ local id
+ select_client || return
+ id="$SELECTED_CLIENT"
+ echo
+ echo "Testando Telegram do cliente $id..."
+ if notify "$id" "TESTE BACKUP MANAGER V3 | Cliente: $id | Telegram funcionando corretamente."; then
+   echo "OK - Telegram do cliente $id funcionando."
+ else
+   echo "FALHA - Telegram do cliente $id nao respondeu corretamente."
+ fi
+ echo
+ echo '[ENTER] Voltar'
+ read -r
+}
+edit_client(){
  local id opt new token chat
  select_client || return; id="$SELECTED_CLIENT"
  while :; do
@@ -321,9 +336,9 @@ delete_client(){
 clients_menu(){
  local opt
  while :; do
-  echo; echo '========== GERENCIAR CLIENTES =========='; echo '[1] Listar clientes'; echo '[2] Adicionar cliente'; echo '[3] Alterar cliente'; echo '[4] Excluir cliente'; echo '[0] Voltar'
+  echo; echo '========== GERENCIAR CLIENTES =========='; echo '[1] Listar clientes'; echo '[2] Adicionar cliente'; echo '[3] Alterar cliente'; echo '[4] Excluir cliente'; echo '[5] Testar Telegram do cliente'; echo '[0] Voltar'
   read_key opt 'Opcao: '
-  case "$opt" in 1) show_clients;; 2) add_client;; 3) edit_client;; 4) delete_client;; 0) return;; *) echo 'Opcao invalida';; esac
+  case "$opt" in 1) show_clients;; 2) add_client;; 3) edit_client;; 4) delete_client;; 5) test_client_telegram;; 0) return;; *) echo 'Opcao invalida';; esac
  done
 }
 menu(){
