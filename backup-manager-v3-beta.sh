@@ -280,70 +280,52 @@ ui_client_list(){
    dialog --backtitle 'BACKUP MANAGER V3 BETA' --title 'CLIENTES CADASTRADOS' --ok-label 'Voltar' --menu 'Clientes e status:' 18 80 12 "${rows[@]}" || true
  fi
 }
-ui_menu(){
- local choice c d log
+ui_edit_client(){
+ local id opt new token chat
+ select_client || return; id="$SELECTED_CLIENT"
  while :; do
-   choice=$(dialog --stdout --backtitle 'BACKUP MANAGER V3 BETA - MULTICLIENTE' --title 'MENU PRINCIPAL' --cancel-label 'Sair' --menu 'Use as setas e ENTER para selecionar:' 18 76 10 \
-     1 'Clientes cadastrados' \
-     2 'Adicionar cliente' \
-     3 'Adicionar MikroTik' \
-     4 'Executar backup manual' \
-     5 'Consultar logs' \
-     0 'Sair') || break
-   case "$choice" in
-     1) ui_manage_clients       ;;
-     2|3)
-       if [[ "$choice" == 2 ]]; then
-         add_client
-       else
-         add_device
-       fi
-       ;;
-     4)
-       if select_client; then
-         c="$SELECTED_CLIENT"
-         if ui_select_device "$c"; then
-           d="$SELECTED_DEVICE"
-           clear
-           run_backup "$c" "$d" || true
-           read -r -p 'Pressione ENTER para continuar...' || true
-         fi
-       fi
-       ;;
-     5)
-       log=$(tail -n 30 "$BASE/logs/execucoes.log" 2>/dev/null || true)
-       dialog --backtitle 'BACKUP MANAGER V3 BETA' --title 'ULTIMAS EXECUCOES' --msgbox "${log:-Nenhuma execucao registrada.}" 22 95
-       ;;
-     0) break;;
-   esac
+  echo; echo "========== ALTERAR CLIENTE: $id =========="
+  echo '[1] Alterar nome'; echo '[2] Alterar Bot Token'; echo '[3] Alterar Chat ID'; echo '[4] Testar Telegram'; echo '[0] Voltar'
+  read -r -p 'Opcao: ' opt
+  case "$opt" in
+   1) read -r -p 'Novo nome: ' new; valid_id "$new" || { echo 'Nome invalido'; continue; }; [[ ! -e "$BASE/clientes/$new" ]] || { echo 'Cliente ja existe'; continue; }; mv -- "$BASE/clientes/$id" "$BASE/clientes/$new"; if [[ -d "$BASE/backups/$id" && ! -e "$BASE/backups/$new" ]]; then mv -- "$BASE/backups/$id" "$BASE/backups/$new"; fi; id="$new"; echo 'Nome alterado.';;
+   2) read -r -s -p 'Novo Bot Token (oculto): ' token; echo; jq --arg v "$token" '.token=$v' "$BASE/clientes/$id/telegram.json" > "$BASE/tmp/tg.$$" && mv "$BASE/tmp/tg.$$" "$BASE/clientes/$id/telegram.json"; chmod 600 "$BASE/clientes/$id/telegram.json";;
+   3) read -r -p 'Novo Chat ID: ' chat; jq --arg v "$chat" '.chat=$v' "$BASE/clientes/$id/telegram.json" > "$BASE/tmp/tg.$$" && mv "$BASE/tmp/tg.$$" "$BASE/clientes/$id/telegram.json"; chmod 600 "$BASE/clientes/$id/telegram.json";;
+   4) notify "$id" "TESTE BACKUP MANAGER V3 | Cliente: $id | Telegram funcionando." && echo 'Telegram OK.' || echo 'Falha no Telegram.';;
+   0) return;; *) echo 'Opcao invalida';;
+  esac
  done
- clear
+}
+delete_client(){
+ local id confirm n
+ select_client || return; id="$SELECTED_CLIENT"; n=$(find "$BASE/clientes/$id" -maxdepth 1 -type f -name '*.json' ! -name telegram.json | wc -l)
+ echo; echo '========== EXCLUIR CLIENTE =========='; echo "Cliente: $id"; echo "Equipamentos cadastrados: $n"
+ ((n==0)) || { echo 'Remova primeiro os equipamentos deste cliente.'; return; }
+ echo 'Backups historicos serao PRESERVADOS.'; read -r -p 'Digite EXCLUIR para confirmar: ' confirm
+ [[ "$confirm" == EXCLUIR ]] || { echo 'Cancelado.'; return; }; rm -f -- "$BASE/clientes/$id/telegram.json"; rmdir -- "$BASE/clientes/$id" && echo 'Cliente removido. Backups preservados.' || echo 'Nao foi possivel remover o cadastro.'
+}
+clients_menu(){
+ local opt
+ while :; do
+  echo; echo '========== GERENCIAR CLIENTES =========='; echo '[1] Listar clientes'; echo '[2] Adicionar cliente'; echo '[3] Alterar cliente'; echo '[4] Excluir cliente'; echo '[0] Voltar'
+  read -r -p 'Opcao: ' opt
+  case "$opt" in 1) show_clients;; 2) add_client;; 3) edit_client;; 4) delete_client;; 0) return;; *) echo 'Opcao invalida';; esac
+ done
 }
 menu(){
- if (( HAS_DIALOG )); then ui_menu; return; fi
  local opt c d
  while :; do
-   echo
-   echo '========================================'
-   echo '       BACKUP MANAGER V3 BETA'
-   echo '========================================'
-   echo '[1] Listar clientes'
-   echo '[2] Adicionar cliente'
-   echo '[3] Adicionar MikroTik'
-   echo '[4] Executar backup manual'
-   echo '[5] Consultar logs'
-   echo '[0] Sair'
-   echo '========================================'
-   read -r -p 'Escolha uma opcao: ' opt
-   case "$opt" in
-     1) show_clients;;
-     2) add_client;;
-     3) add_device;;
-     4) select_client || continue; c="$SELECTED_CLIENT"; read -r -p 'Nome do dispositivo: ' d; run_backup "$c" "$d" || true;;
-     5) tail -n 30 "$BASE/logs/execucoes.log" 2>/dev/null || echo 'Nenhum log ainda.';;
-     0) break;;
-     *) echo 'Opcao invalida';;
-   esac
+  echo; echo '========================================'; echo '       BACKUP MANAGER V3 BETA'; echo '========================================'; echo '[1] Gerenciar clientes'; echo '[2] Gerenciar equipamentos'; echo '[3] Executar backup manual'; echo '[4] Agendamentos'; echo '[5] Consultar logs'; echo '[6] Configuracoes'; echo '[0] Sair'; echo '========================================'
+  read -r -p 'Escolha uma opcao: ' opt
+  case "$opt" in
+   1) clients_menu;;
+   2) echo 'Gerenciamento de equipamentos: proxima etapa.';;
+   3) select_client || continue; c="$SELECTED_CLIENT"; read -r -p 'Nome do dispositivo: ' d; run_backup "$c" "$d" || true;;
+   4) echo 'Agendamentos: modulo ainda nao implementado nesta beta.';;
+   5) tail -n 30 "$BASE/logs/execucoes.log" 2>/dev/null || echo 'Nenhum log ainda.';;
+   6) echo 'Configuracoes: modulo ainda nao implementado nesta beta.';;
+   0) break;; *) echo 'Opcao invalida';;
+  esac
  done
 }
 case "${1:-menu}" in menu) menu;; run) [[ $# == 3 ]] || exit 2; run_backup "$2" "$3";; *) echo 'Uso: bash backup-manager-v3-beta.sh [menu|run CLIENTE DISPOSITIVO]'; exit 2;; esac
