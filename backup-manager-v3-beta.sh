@@ -110,13 +110,47 @@ show_clients(){
      echo "Testando Telegram do cliente $selected..."
      if notify "$selected" "TESTE BACKUP MANAGER V3 | Cliente: $selected | Telegram funcionando corretamente."; then
        echo "OK - Telegram do cliente $selected funcionando."
+       echo
+       echo '[ENTER] Voltar para a lista'
+       read -r
+       return
      else
        echo "FALHA - Telegram do cliente $selected nao respondeu corretamente."
+       echo
+       echo '[1] Corrigir Bot Token e Chat ID'
+       echo '[2] Testar novamente'
+       echo '[0] Voltar para a lista'
+       local action newtoken newchat
+       while :; do
+         read_key action 'Opcao: '
+         case "$action" in
+           1)
+             read -r -s -p 'Novo Bot Token (oculto) [0 cancela]: ' newtoken; echo
+             [[ "$newtoken" == 0 ]] && continue
+             read -r -p 'Novo Chat ID [0 cancela]: ' newchat
+             [[ "$newchat" == 0 ]] && continue
+             jq --arg token "$newtoken" --arg chat "$newchat" '.token=$token | .chat=$chat' "$BASE/clientes/$selected/telegram.json" > "$BASE/tmp/tg.$" &&
+               mv "$BASE/tmp/tg.$" "$BASE/clientes/$selected/telegram.json"
+             chmod 600 "$BASE/clientes/$selected/telegram.json"
+             echo 'Dados atualizados. Testando novamente...'
+             if notify "$selected" "TESTE BACKUP MANAGER V3 | Cliente: $selected | Telegram funcionando corretamente."; then
+               echo "OK - Telegram do cliente $selected funcionando."
+               echo '[ENTER] Voltar para a lista'; read -r; return
+             fi
+             echo 'FALHA - ainda nao foi possivel enviar ao Telegram.'
+             ;;
+           2)
+             if notify "$selected" "TESTE BACKUP MANAGER V3 | Cliente: $selected | Telegram funcionando corretamente."; then
+               echo "OK - Telegram do cliente $selected funcionando."
+               echo '[ENTER] Voltar para a lista'; read -r; return
+             fi
+             echo 'FALHA - Telegram continua sem responder corretamente.'
+             ;;
+           0) return;;
+           *) echo 'Opcao invalida.';;
+         esac
+       done
      fi
-     echo
-     echo '[ENTER] Voltar para a lista'
-     read -r
-     return
    fi
    echo 'Cliente invalido.'
  done
@@ -216,7 +250,10 @@ add_device(){
  ui_message "MikroTik $name cadastrado com sucesso em $id.\n\nNenhum agendamento foi criado."
 }
 notify(){
- local client="$1" msg="$2" cfg="$BASE/clientes/$client/telegram.json" token chat
+ local client msg cfg token chat
+ client="${1:-}"; msg="${2:-}"
+ [[ -n "$client" ]] || return 1
+ cfg="$BASE/clientes/$client/telegram.json"
  [[ -f "$cfg" ]] || return 1
  token=$(jq -r '.token // ""' "$cfg"); chat=$(jq -r '.chat // ""' "$cfg")
  [[ -n "$token" && -n "$chat" ]] || return 1
