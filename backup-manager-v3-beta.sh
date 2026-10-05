@@ -639,7 +639,7 @@ schedule_files(){ SCHEDULE_FILES=(); local f; schedule_dir; for f in "$BASE/conf
 schedule_list(){
  local f n=0 dev; schedule_files; echo; echo "================ AGENDAMENTOS V3 ================"; printf "%-4s %-16s %-22s %-8s\n" "N" "CLIENTE" "EQUIPAMENTO" "HORARIO"
  for f in "${SCHEDULE_FILES[@]}"; do ((++n)); dev=$(jq -r .device "$f"); [[ "$dev" == "__ALL__" ]] && dev="TODOS"; printf "%-4s %-16s %-22s %s:%s\n" "$n" "$(jq -r .client "$f")" "$dev" "$(jq -r .hour "$f")" "$(jq -r .minute "$f")"; done
- ((n)) || echo "Nenhum agendamento V3 cadastrado."; echo "=================================================="
+ if ((n==0)); then echo "Nenhum agendamento V3 cadastrado."; fi; echo "=================================================="
 }
 schedule_select_file(){
  local f i=0 opt dev; schedule_files; ((${#SCHEDULE_FILES[@]})) || { echo "Nenhum agendamento V3 cadastrado."; return 1; }; echo
