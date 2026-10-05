@@ -2,6 +2,8 @@
 set -Eeuo pipefail
 umask 077
 BASE=/opt/backup-manager-v3
+# V3 usa interface de terminal simples; dialog permanece desativado.
+HAS_DIALOG=0
 mkdir -p "$BASE"/{clientes,config,logs,backups,tmp}
 chmod 700 "$BASE" "$BASE"/{clientes,config,logs,backups,tmp}
 need(){ command -v "$1" >/dev/null || { echo "Dependencia ausente: $1"; exit 1; }; }
