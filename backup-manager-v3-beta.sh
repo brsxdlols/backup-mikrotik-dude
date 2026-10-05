@@ -7,7 +7,7 @@ HAS_DIALOG=0
 mkdir -p "$BASE"/{clientes,config,logs,backups,tmp}
 chmod 700 "$BASE" "$BASE"/{clientes,config,logs,backups,tmp}
 need(){ command -v "$1" >/dev/null || { echo "Dependencia ausente: $1"; exit 1; }; }
-for x in ssh sshpass scp curl jq flock tar; do need "$x"; done
+for x in ssh sshpass scp curl jq flock zip; do need "$x"; done
 valid_id(){ [[ "$1" =~ ^[a-zA-Z0-9_-]+$ ]]; }
 read_key(){
  local __var="$1" __prompt="$2" __key
@@ -618,35 +618,44 @@ manual_backup_menu(){
 }
 schedule_dir(){ mkdir -p "$BASE/config/agendamentos"; chmod 700 "$BASE/config/agendamentos"; }
 schedule_install_cron(){
- local id="$1" client="$2" device="$3" hour="$4" minute="$5" cron="/etc/cron.d/backup-manager-v3-$id"
- printf "# Backup Manager V3 - %s\n%s %s * * * root %q run %q %q >> %q 2>&1\n" "$id" "$minute" "$hour" "$0" "$client" "$device" "$BASE/logs/cron-$id.log" > "$cron"
- chmod 644 "$cron"
+ local id="$1" client="$2" device="$3" hour="$4" minute="$5" cron="/etc/cron.d/backup-manager-v3-$id" cmd
+ if [[ "$device" == "__ALL__" ]]; then cmd=$(printf "%q run-all %q" "$0" "$client"); else cmd=$(printf "%q run %q %q" "$0" "$client" "$device"); fi
+ printf "# Backup Manager V3 - %s\n%s %s * * * root %s >> %q 2>&1\n" "$id" "$minute" "$hour" "$cmd" "$BASE/logs/cron-$id.log" > "$cron"; chmod 644 "$cron"
+}
+schedule_choose_target(){
+ local client="$1" opt; echo; echo "========== ALVO DO AGENDAMENTO =========="; echo "[1] TODOS os equipamentos do cliente"; echo "[2] Selecionar um equipamento"; echo "[0] Voltar"; read_key opt "Opcao: "
+ case "$opt" in 1) SELECTED_DEVICE="__ALL__";; 2) select_device_text "$client" || return 1;; 0) return 1;; *) echo "Opcao invalida."; return 1;; esac
 }
 schedule_add(){
- local client device tm minute hh id cfg
- select_client || return; client="$SELECTED_CLIENT"; select_device_text "$client" || return; device="$SELECTED_DEVICE"
+ local client device tm minute hh id cfg label; select_client || return; client="$SELECTED_CLIENT"; schedule_choose_target "$client" || return; device="$SELECTED_DEVICE"
  echo; echo "Horario diario HH:MM. Digite 0 para cancelar."; read -r -p "Horario: " tm; [[ "$tm" == 0 ]] && return
  [[ "$tm" =~ ^([01][0-9]|2[0-3]):([0-5][0-9])$ ]] || { status_fail "Horario invalido. Exemplo: 06:30"; return; }
- hh="${BASH_REMATCH[1]}"; minute="${BASH_REMATCH[2]}"; id="$client-$device"; schedule_dir; cfg="$BASE/config/agendamentos/$id.json"
- jq -n --arg id "$id" --arg client "$client" --arg device "$device" --arg hour "$hh" --arg minute "$minute" '{id:$id,client:$client,device:$device,hour:$hour,minute:$minute,enabled:true}' > "$cfg"; chmod 600 "$cfg"
- schedule_install_cron "$id" "$client" "$device" "$hh" "$minute"; status_ok "Agendamento criado: $client / $device diariamente as $hh:$minute"
+ hh="${BASH_REMATCH[1]}"; minute="${BASH_REMATCH[2]}"; [[ "$device" == "__ALL__" ]] && id="$client-TODOS" || id="$client-$device"; schedule_dir; cfg="$BASE/config/agendamentos/$id.json"
+ jq -n --arg id "$id" --arg client "$client" --arg device "$device" --arg hour "$hh" --arg minute "$minute" '{id:$id,client:$client,device:$device,hour:$hour,minute:$minute,enabled:true}' > "$cfg"; chmod 600 "$cfg"; schedule_install_cron "$id" "$client" "$device" "$hh" "$minute"
+ [[ "$device" == "__ALL__" ]] && label="TODOS" || label="$device"; status_ok "Agendamento criado: $client / $label diariamente as $hh:$minute"
 }
+schedule_files(){ SCHEDULE_FILES=(); local f; schedule_dir; for f in "$BASE/config/agendamentos/"*.json; do [[ -f "$f" ]] && SCHEDULE_FILES+=("$f"); done; }
 schedule_list(){
- local f n=0; schedule_dir; echo; echo "================ AGENDAMENTOS V3 ================"; printf "%-4s %-16s %-22s %-8s\n" "N" "CLIENTE" "EQUIPAMENTO" "HORARIO"
- for f in "$BASE/config/agendamentos/"*.json; do [[ -f "$f" ]] || continue; ((++n)); printf "%-4s %-16s %-22s %s:%s\n" "$n" "$(jq -r .client "$f")" "$(jq -r .device "$f")" "$(jq -r .hour "$f")" "$(jq -r .minute "$f")"; done
+ local f n=0 dev; schedule_files; echo; echo "================ AGENDAMENTOS V3 ================"; printf "%-4s %-16s %-22s %-8s\n" "N" "CLIENTE" "EQUIPAMENTO" "HORARIO"
+ for f in "${SCHEDULE_FILES[@]}"; do ((++n)); dev=$(jq -r .device "$f"); [[ "$dev" == "__ALL__" ]] && dev="TODOS"; printf "%-4s %-16s %-22s %s:%s\n" "$n" "$(jq -r .client "$f")" "$dev" "$(jq -r .hour "$f")" "$(jq -r .minute "$f")"; done
  ((n)) || echo "Nenhum agendamento V3 cadastrado."; echo "=================================================="
 }
+schedule_select_file(){
+ local f i=0 opt dev; schedule_files; ((${#SCHEDULE_FILES[@]})) || { echo "Nenhum agendamento V3 cadastrado."; return 1; }; echo
+ for f in "${SCHEDULE_FILES[@]}"; do ((++i)); dev=$(jq -r .device "$f"); [[ "$dev" == "__ALL__" ]] && dev="TODOS"; echo "[$i] $(jq -r .client "$f") / $dev - $(jq -r .hour "$f"):$(jq -r .minute "$f")"; done
+ echo "[0] Voltar"; read -r -p "Numero: " opt; [[ "$opt" == 0 ]] && return 1; [[ "$opt" =~ ^[0-9]+$ ]] && ((opt>=1 && opt<=${#SCHEDULE_FILES[@]})) || { echo "Opcao invalida."; return 1; }; SELECTED_SCHEDULE="${SCHEDULE_FILES[opt-1]}"
+}
+schedule_edit(){
+ local f id client device tm hh minute tmp; echo "========== ALTERAR HORARIO =========="; schedule_select_file || return; f="$SELECTED_SCHEDULE"; id=$(jq -r .id "$f"); client=$(jq -r .client "$f"); device=$(jq -r .device "$f")
+ read -r -p "Novo horario HH:MM [0 cancela]: " tm; [[ "$tm" == 0 ]] && return; [[ "$tm" =~ ^([01][0-9]|2[0-3]):([0-5][0-9])$ ]] || { status_fail "Horario invalido."; return; }; hh="${BASH_REMATCH[1]}"; minute="${BASH_REMATCH[2]}"
+ tmp="$BASE/tmp/schedule.$$"; jq --arg hour "$hh" --arg minute "$minute" '.hour=$hour | .minute=$minute' "$f" > "$tmp" && mv "$tmp" "$f"; chmod 600 "$f"; schedule_install_cron "$id" "$client" "$device" "$hh" "$minute"; status_ok "Horario alterado para $hh:$minute."
+}
 schedule_delete(){
- local files=() f i=0 opt id; schedule_dir; for f in "$BASE/config/agendamentos/"*.json; do [[ -f "$f" ]] && files+=("$f"); done
- ((${#files[@]})) || { echo "Nenhum agendamento V3 cadastrado."; return; }; echo; echo "========== EXCLUIR AGENDAMENTO =========="
- for f in "${files[@]}"; do ((++i)); echo "[$i] $(jq -r '.client+" / "+.device+" - "+.hour+":"+(.minute|tostring)' "$f")"; done
- echo "[0] Voltar"; read -r -p "Numero: " opt; [[ "$opt" == 0 ]] && return
- [[ "$opt" =~ ^[0-9]+$ ]] && ((opt>=1 && opt<=${#files[@]})) || { echo "Opcao invalida."; return; }
- f="${files[opt-1]}"; id=$(jq -r .id "$f"); rm -f "/etc/cron.d/backup-manager-v3-$id" "$f"; status_ok "Agendamento $id excluido."
+ local f id; echo "========== EXCLUIR AGENDAMENTO =========="; schedule_select_file || return; f="$SELECTED_SCHEDULE"; id=$(jq -r .id "$f"); rm -f "/etc/cron.d/backup-manager-v3-$id" "$f"; status_ok "Agendamento $id excluido."
 }
 schedules_menu(){
- local opt; while :; do echo; echo "========== AGENDAMENTOS =========="; echo "[1] Listar agendamentos V3"; echo "[2] Criar agendamento diario"; echo "[3] Excluir agendamento"; echo "[4] Informacoes / seguranca"; echo "[0] Voltar"; read_key opt "Opcao: "; case "$opt" in
- 1) schedule_list;; 2) schedule_add;; 3) schedule_delete;; 4) echo; echo "Os agendamentos V3 usam arquivos proprios em /etc/cron.d/backup-manager-v3-*."; echo "Os crons e scripts do V2 NAO sao alterados.";; 0) return;; *) echo "Opcao invalida.";; esac; done
+ local opt; while :; do echo; echo "========== AGENDAMENTOS =========="; echo "[1] Listar agendamentos V3"; echo "[2] Criar agendamento diario"; echo "[3] Alterar horario"; echo "[4] Excluir agendamento"; echo "[5] Informacoes / seguranca"; echo "[0] Voltar"; read_key opt "Opcao: "; case "$opt" in
+ 1) schedule_list;; 2) schedule_add;; 3) schedule_edit;; 4) schedule_delete;; 5) echo; echo "Os agendamentos V3 usam /etc/cron.d/backup-manager-v3-*."; echo "Os crons e scripts do V2 NAO sao alterados.";; 0) return;; *) echo "Opcao invalida.";; esac; done
 }
 logs_menu(){
  local opt
@@ -690,4 +699,4 @@ menu(){
   esac
  done
 }
-case "${1:-menu}" in menu) menu;; run) [[ $# == 3 ]] || exit 2; run_backup "$2" "$3";; *) echo 'Uso: bash backup-manager-v3-beta.sh [menu|run CLIENTE DISPOSITIVO]'; exit 2;; esac
+case "${1:-menu}" in menu) menu;; run) [[ $# == 3 ]] || exit 2; run_backup "$2" "$3";; run-all) [[ $# == 2 ]] || exit 2; backup_all_devices "$2";; *) echo 'Uso: bash backup-manager-v3-beta.sh [menu|run CLIENTE DISPOSITIVO|run-all CLIENTE]'; exit 2;; esac
