@@ -270,16 +270,31 @@ notify_document(){
  [[ -n "$token" && -n "$chat" ]] || return 1
  curl -fsS --connect-timeout 10 --max-time 120 -X POST "https://api.telegram.org/bot${token}/sendDocument" -F "chat_id=$chat" -F "document=@$file" -F "caption=$caption" | jq -e '.ok==true' >/dev/null
 }
+retry_cmd(){
+ local label="$1" errfile="$2"; shift 2
+ local attempt rc=1 max_attempts=3 retry_delay=8
+ for attempt in $(seq 1 "$max_attempts"); do
+  : > "$errfile"
+  if "$@" 2>"$errfile"; then return 0; else rc=$?; fi
+  if ((attempt<max_attempts)); then status_info "$label falhou. Nova tentativa $((attempt+1))/$max_attempts em ${retry_delay}s..."; sleep "$retry_delay"; fi
+ done
+ return "$rc"
+}
 run_backup(){
- local client name file ip port username password lock temp stamp identity safe_id remote local_rsc local_backup zipfile dest err step reason size caption failed=0
+ local client name file ip port username password lock temp stamp identity safe_id remote local_rsc local_backup zipfile dest err step reason size caption failed=0 attempt max_attempts=3 retry_delay=8
  client="${1:-}"; name="${2:-}"; file="$BASE/clientes/$client/$name.json"
  valid_id "$client" && valid_id "$name" && [[ -f "$file" ]] || { echo 'Dispositivo nao encontrado'; return 1; }
  ip=$(jq -r '.ip' "$file"); port=$(jq -r '.port' "$file"); username=$(jq -r '.username' "$file"); password=$(jq -r '.password' "$file")
  [[ "$port" =~ ^[0-9]+$ ]] && ((port>=1 && port<=65535)) || { status_fail "Porta SSH invalida no cadastro de $client/$name: $port"; echo "Corrija em Gerenciar clientes > cliente > Alterar equipamento > Porta SSH."; return 1; }
  lock="$BASE/tmp/$client-$name.lock"; exec 9>"$lock"; flock -n 9 || { echo 'Backup ja em execucao'; return 1; }
  temp=$(mktemp -d "$BASE/tmp/run.XXXXXXXX"); stamp=$(date +%Y%m%d-%H%M%S); err="$temp/error"
- identity=$(SSHPASS="$password" sshpass -e ssh -p "$port" -o ConnectTimeout=15 -o ConnectionAttempts=1 -o StrictHostKeyChecking=accept-new "$username@$ip" ':put [/system identity get name]' </dev/null 2>"$err" | tr -d '\r') || true
- if [[ -z "$identity" ]]; then reason='Falha ao obter Identity'; step='identity'; failed=1; fi
+ for attempt in $(seq 1 "$max_attempts"); do
+  : > "$err"
+  identity=$(SSHPASS="$password" sshpass -e ssh -p "$port" -o ConnectTimeout=15 -o ConnectionAttempts=1 -o StrictHostKeyChecking=accept-new "$username@$ip" ':put [/system identity get name]' </dev/null 2>"$err" | tr -d '\r') || true
+  [[ -n "$identity" ]] && break
+  if ((attempt<max_attempts)); then status_info "Falha ao conectar/obter Identity. Nova tentativa $((attempt+1))/$max_attempts em ${retry_delay}s..."; sleep "$retry_delay"; fi
+ done
+ if [[ -z "$identity" ]]; then reason="Falha ao obter Identity apos $max_attempts tentativas"; step='identity'; failed=1; fi
  if ((failed==0)); then safe_id=$(echo "$identity" | tr ' /\\:' '____'); remote="routeros-$safe_id-$stamp"; local_rsc="$temp/$remote.rsc"; local_backup="$temp/$remote.backup"; dest="$BASE/backups/$client/$name"; mkdir -p "$dest"; chmod 700 "$dest"; zipfile="$dest/$remote.zip"; fi
  if ((failed==0)); then
   echo "Identity: $identity"; echo 'Gerando export RouterOS...'
@@ -292,8 +307,8 @@ run_backup(){
   echo 'Gerando backup binario RouterOS...'
   SSHPASS="$password" sshpass -e ssh -p "$port" -o ConnectTimeout=15 -o ConnectionAttempts=1 -o StrictHostKeyChecking=accept-new "$username@$ip" "/system backup save name=\"$remote\" dont-encrypt=yes" </dev/null >/dev/null 2>"$err" || { reason='Falha ao gerar backup binario'; step='binary-backup'; failed=1; }
  fi
- if ((failed==0)); then sleep 2; echo 'Baixando backup binario...'; SSHPASS="$password" sshpass -e scp -P "$port" -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new "$username@$ip:$remote.backup" "$local_backup" >/dev/null 2>"$err" || { reason='Falha no SCP do backup binario'; step='binary-download'; failed=1; }; fi
- if ((failed==0)); then sleep 2; echo 'Baixando export...'; SSHPASS="$password" sshpass -e scp -P "$port" -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new "$username@$ip:$remote.rsc" "$local_rsc" >/dev/null 2>"$err" || { reason='Falha no SCP do export'; step='download'; failed=1; }; fi
+ if ((failed==0)); then sleep 2; echo 'Baixando backup binario...'; retry_cmd 'SCP do backup binario' "$err" env SSHPASS="$password" sshpass -e scp -P "$port" -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new "$username@$ip:$remote.backup" "$local_backup" >/dev/null || { reason='Falha no SCP do backup binario apos 3 tentativas'; step='binary-download'; failed=1; }; fi
+ if ((failed==0)); then sleep 2; echo 'Baixando export...'; retry_cmd 'SCP do export' "$err" env SSHPASS="$password" sshpass -e scp -P "$port" -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new "$username@$ip:$remote.rsc" "$local_rsc" >/dev/null || { reason='Falha no SCP do export apos 3 tentativas'; step='download'; failed=1; }; fi
  if ((failed==0)) && [[ ! -s "$local_backup" ]]; then reason='Arquivo .backup vazio'; step='binary-validation'; failed=1; fi
  if ((failed==0)) && [[ ! -s "$local_rsc" ]]; then reason='Arquivo de export vazio'; step='validacao'; failed=1; fi
  if ((failed==0)); then SSHPASS="$password" sshpass -e ssh -p "$port" -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new "$username@$ip" "/file remove [find where name=\"$remote.rsc\" or name=\"$remote.backup\"]" </dev/null >/dev/null 2>&1 || true; (cd "$temp" && zip -q "$zipfile" "$(basename "$local_rsc")" "$(basename "$local_backup")") || { reason='Falha ao compactar ZIP'; step='compactacao'; failed=1; }; fi
