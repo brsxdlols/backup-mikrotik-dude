@@ -534,8 +534,10 @@ manage_selected_client(){
   echo '[3] Alterar equipamento'
   echo '[4] Excluir equipamento'
   echo '[5] Testar conexao SSH'
-  echo '[6] Testar / corrigir Telegram'
-  echo '[7] Alterar dados do cliente'
+  echo '[6] Testar conexao de TODOS'
+  echo '[7] Executar backup'
+  echo '[8] Testar / corrigir Telegram'
+  echo '[9] Alterar dados do cliente'
   echo '[0] Voltar'
   read_key opt 'Opcao: '
   case "$opt" in
@@ -550,8 +552,12 @@ manage_selected_client(){
    5)
     select_device_text "$id" || continue; test_device_connection "$id" "$SELECTED_DEVICE" || true;;
    6)
-    if notify "$id" "TESTE BACKUP MANAGER V3 | Cliente: $id | Telegram funcionando corretamente."; then echo 'OK - Telegram funcionando.'; else echo 'FALHA - use Alterar dados do cliente para corrigir Bot Token/Chat ID.'; fi;;
+    test_all_devices "$id";;
    7)
+    backup_client_menu "$id";;
+   8)
+    if notify "$id" "TESTE BACKUP MANAGER V3 | Cliente: $id | Telegram funcionando corretamente."; then status_ok 'Telegram funcionando.'; else status_fail 'Telegram indisponivel. Corrija Bot Token/Chat ID.'; fi;;
+   9)
     SELECTED_CLIENT="$id"; edit_client_direct "$id";;
    0) return;; *) echo 'Opcao invalida.';;
   esac
