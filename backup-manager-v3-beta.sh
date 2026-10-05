@@ -241,7 +241,7 @@ add_device(){
    read -r -p 'Usuario: ' username
    read_secret password
    result=$(SSHPASS="$password" sshpass -e ssh -o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -p "$port" -- "$username@$ip" ':put "OK"' 2>&1) && rc=0 || rc=$?
-   if ! { ((rc==0)) && [[ "$result" == *OK* ]]; }; then echo "Falha na conexao (codigo $rc): $result"; echo; echo "[ENTER] Voltar ao cliente"; read -r; return; fi
+   if ! { ((rc==0)) && [[ "$result" == *OK* ]]; }; then echo "Falha na conexao (codigo $rc): $result"; echo; echo "[1] Tentar novamente"; echo "[2] Corrigir dados da conexao"; echo "[0] Cancelar cadastro"; read_key opt "Opcao: "; case "$opt" in 1) add_device_skip_select "$id"; return;; 2) add_device_skip_select "$id"; return;; 0) return;; *) return;; esac; fi
  fi
 
  file="$BASE/clientes/$id/$name.json"
@@ -479,7 +479,7 @@ list_devices_for_client(){
 }
 add_device_for_client(){ local save="$SELECTED_CLIENT"; SELECTED_CLIENT="$1"; add_device_skip_select "$1"; SELECTED_CLIENT="$save"; }
 add_device_skip_select(){
- local id="$1" name ip port username password file result rc
+ local id="$1" name ip port username password file result rc opt
  echo; echo "========== ADICIONAR MIKROTIK - $id =========="; echo 'Digite 0 em qualquer campo para cancelar.'
  read -r -p 'Nome do dispositivo: ' name; [[ "$name" == 0 ]] && return; valid_id "$name" || { echo 'Nome invalido'; return; }
  file="$BASE/clientes/$id/$name.json"; [[ ! -e "$file" ]] || { echo 'Dispositivo ja cadastrado'; return; }
