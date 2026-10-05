@@ -624,62 +624,39 @@ schedule_install_cron(){
  printf "# Backup Manager V3 - %s\n%s %s * * * root %s >> %q 2>&1\n" "$id" "$minute" "$hour" "$cmd" "$BASE/logs/cron-$id.log" > "$cron"; chmod 644 "$cron"
 }
 schedule_next_device_time(){
- local client="$1" count=0 f total
- schedule_dir
- for f in "$BASE/config/agendamentos/"*.json; do [[ -f "$f" ]] || continue; [[ "$(jq -r '.client // ""' "$f")" == "$client" ]] || continue; ((++count)); done
- # Primeiro equipamento 02:00; cada proximo equipamento +1 minuto.
+ local client="$1" count=0 f total; schedule_dir
+ for f in "$BASE/config/agendamentos/"*.json; do [[ -f "$f" ]] || continue; [[ "$(jq -r '.client // ""' "$f")" == "$client" ]] || continue; ((++count)) || true; done
  total=$count; SCHEDULE_HOUR=$(printf "%02d" $((2 + total / 60))); SCHEDULE_MINUTE=$(printf "%02d" $((total % 60)))
 }
 schedule_ensure_device_auto(){
- local client="$1" device="$2" id cfg
- schedule_dir; id="$client-$device"; cfg="$BASE/config/agendamentos/$id.json"; [[ -f "$cfg" ]] && return 0
- schedule_next_device_time "$client"
- jq -n --arg id "$id" --arg client "$client" --arg device "$device" --arg hour "$SCHEDULE_HOUR" --arg minute "$SCHEDULE_MINUTE" '{id:$id,client:$client,device:$device,hour:$hour,minute:$minute,enabled:true,automatic:true}' > "$cfg"; chmod 600 "$cfg"
- schedule_install_cron "$id" "$client" "$device" "$SCHEDULE_HOUR" "$SCHEDULE_MINUTE"
- status_ok "Agendamento automatico: $device diariamente as $SCHEDULE_HOUR:$SCHEDULE_MINUTE."
+ local client="$1" device="$2" id cfg; schedule_dir; id="$client-$device"; cfg="$BASE/config/agendamentos/$id.json"; [[ -f "$cfg" ]] && return 0
+ schedule_next_device_time "$client"; jq -n --arg id "$id" --arg client "$client" --arg device "$device" --arg hour "$SCHEDULE_HOUR" --arg minute "$SCHEDULE_MINUTE" '{id:$id,client:$client,device:$device,hour:$hour,minute:$minute,enabled:true,automatic:true}' > "$cfg"; chmod 600 "$cfg"; schedule_install_cron "$id" "$client" "$device" "$SCHEDULE_HOUR" "$SCHEDULE_MINUTE"; status_ok "Agendamento automatico: $device diariamente as $SCHEDULE_HOUR:$SCHEDULE_MINUTE."
 }
-schedule_choose_target(){
- local client="$1" opt; echo; echo "========== ALVO DO AGENDAMENTO =========="; echo "[1] TODOS os equipamentos do cliente"; echo "[2] Selecionar um equipamento"; echo "[0] Voltar"; read_key opt "Opcao: "
- case "$opt" in 1) SELECTED_DEVICE="__ALL__";; 2) select_device_text "$client" || return 1;; 0) return 1;; *) echo "Opcao invalida."; return 1;; esac
+schedule_files(){ SCHEDULE_FILES=(); local f; schedule_dir; for f in "$BASE/config/agendamentos/"*.json; do if [[ -f "$f" ]]; then SCHEDULE_FILES+=("$f"); fi; done; return 0; }
+schedule_sync_missing(){
+ local d client device created=0; schedule_dir
+ for d in "$BASE/clientes/"*/*.json; do [[ -f "$d" ]] || continue; [[ "${d##*/}" == "telegram.json" ]] && continue; client=$(basename "$(dirname "$d")"); device=$(basename "$d" .json); if [[ ! -f "$BASE/config/agendamentos/$client-$device.json" ]]; then schedule_ensure_device_auto "$client" "$device"; ((++created)) || true; fi; done
+ ((created==0)) && return 0; status_info "$created agendamento(s) faltante(s) criado(s) automaticamente."
 }
-schedule_add(){
- local client device tm minute hh id cfg label; select_client || return; client="$SELECTED_CLIENT"; schedule_choose_target "$client" || return; device="$SELECTED_DEVICE"
- echo; echo "Horario diario HH:MM. Digite 0 para cancelar."; read -r -p "Horario: " tm; [[ "$tm" == 0 ]] && return
- [[ "$tm" =~ ^([01][0-9]|2[0-3]):([0-5][0-9])$ ]] || { status_fail "Horario invalido. Exemplo: 06:30"; return; }
- hh="${BASH_REMATCH[1]}"; minute="${BASH_REMATCH[2]}"; [[ "$device" == "__ALL__" ]] && id="$client-TODOS" || id="$client-$device"; schedule_dir; cfg="$BASE/config/agendamentos/$id.json"
- jq -n --arg id "$id" --arg client "$client" --arg device "$device" --arg hour "$hh" --arg minute "$minute" '{id:$id,client:$client,device:$device,hour:$hour,minute:$minute,enabled:true}' > "$cfg"; chmod 600 "$cfg"; schedule_install_cron "$id" "$client" "$device" "$hh" "$minute"
- [[ "$device" == "__ALL__" ]] && label="TODOS" || label="$device"; status_ok "Agendamento criado: $client / $label diariamente as $hh:$minute"
+schedule_build_plan(){
+ PLAN_CLIENT=(); PLAN_DEVICE=(); PLAN_OLD=(); PLAN_NEW=(); local d client device old idx=0 hh mm cfg
+ while IFS= read -r d; do [[ -f "$d" ]] || continue; client=$(basename "$(dirname "$d")"); device=$(basename "$d" .json); cfg="$BASE/config/agendamentos/$client-$device.json"; old="SEM"; [[ -f "$cfg" ]] && old="$(jq -r '.hour+":"+(.minute|tostring)' "$cfg")"; hh=$(printf "%02d" $((2 + idx / 60))); mm=$(printf "%02d" $((idx % 60))); PLAN_CLIENT+=("$client"); PLAN_DEVICE+=("$device"); PLAN_OLD+=("$old"); PLAN_NEW+=("$hh:$mm"); ((++idx)) || true; done < <(find "$BASE/clientes" -mindepth 2 -maxdepth 2 -type f -name "*.json" ! -name telegram.json | sort)
 }
-schedule_files(){
- SCHEDULE_FILES=(); local f
- schedule_dir
- for f in "$BASE/config/agendamentos/"*.json; do
-  if [[ -f "$f" ]]; then SCHEDULE_FILES+=("$f"); fi
- done
- return 0
+schedule_reorganize(){
+ local i confirm client device old new hh mm id cfg total; schedule_build_plan; total=${#PLAN_DEVICE[@]}; ((total)) || { echo "Nenhum equipamento cadastrado."; return; }
+ echo; echo "================ PREVIA DA REORGANIZACAO ================"; printf "%-16s %-22s %-12s %-12s\n" "CLIENTE" "EQUIPAMENTO" "ATUAL" "NOVO"
+ for ((i=0;i<total;i++)); do client="${PLAN_CLIENT[i]}"; device="${PLAN_DEVICE[i]}"; old="${PLAN_OLD[i]}"; new="${PLAN_NEW[i]}"; if [[ "$old" == "$new" ]]; then printf "%s%-16s %-22s %-12s %-12s%s\n" "$GREEN" "$client" "$device" "$old" "$new" "$RESET"; else printf "%s%-16s %-22s %-12s -> %-9s%s\n" "$YELLOW" "$client" "$device" "$old" "$new" "$RESET"; fi; done
+ echo "=========================================================="; echo "Verde = permanece igual | Amarelo = sera criado/alterado"; echo; read -r -p "Aplicar esta reorganizacao? [S/N]: " confirm; [[ "$confirm" =~ ^[Ss]$ ]] || { echo "Reorganizacao cancelada. Nenhuma alteracao aplicada."; return; }
+ rm -f /etc/cron.d/backup-manager-v3-* "$BASE/config/agendamentos/"*.json 2>/dev/null || true
+ for ((i=0;i<total;i++)); do client="${PLAN_CLIENT[i]}"; device="${PLAN_DEVICE[i]}"; IFS=: read -r hh mm <<< "${PLAN_NEW[i]}"; id="$client-$device"; cfg="$BASE/config/agendamentos/$id.json"; jq -n --arg id "$id" --arg client "$client" --arg device "$device" --arg hour "$hh" --arg minute "$mm" '{id:$id,client:$client,device:$device,hour:$hour,minute:$minute,enabled:true,automatic:true}' > "$cfg"; chmod 600 "$cfg"; schedule_install_cron "$id" "$client" "$device" "$hh" "$mm"; done; status_ok "$total equipamento(s) reorganizado(s), iniciando as 02:00 com intervalo de 1 minuto."
 }
 schedule_list(){
- local f n=0 dev; schedule_files; echo; echo "================ AGENDAMENTOS V3 ================"; printf "%-4s %-16s %-22s %-8s\n" "N" "CLIENTE" "EQUIPAMENTO" "HORARIO"
- for f in "${SCHEDULE_FILES[@]}"; do ((++n)); dev=$(jq -r .device "$f"); [[ "$dev" == "__ALL__" ]] && dev="TODOS"; printf "%-4s %-16s %-22s %s:%s\n" "$n" "$(jq -r .client "$f")" "$dev" "$(jq -r .hour "$f")" "$(jq -r .minute "$f")"; done
- if ((n==0)); then echo "Nenhum agendamento V3 cadastrado."; fi; echo "=================================================="
+ local f n=0 dev; schedule_sync_missing; schedule_files; echo; echo "================ AGENDAMENTOS V3 ================"; printf "%-4s %-16s %-22s %-8s\n" "N" "CLIENTE" "EQUIPAMENTO" "HORARIO"; for f in "${SCHEDULE_FILES[@]}"; do ((++n)) || true; dev=$(jq -r .device "$f"); printf "%-4s %-16s %-22s %s:%s\n" "$n" "$(jq -r .client "$f")" "$dev" "$(jq -r .hour "$f")" "$(jq -r .minute "$f")"; done; ((n==0)) && echo "Nenhum agendamento V3 cadastrado."; echo "=================================================="
 }
-schedule_select_file(){
- local f i=0 opt dev; schedule_files; ((${#SCHEDULE_FILES[@]})) || { echo "Nenhum agendamento V3 cadastrado."; return 1; }; echo
- for f in "${SCHEDULE_FILES[@]}"; do ((++i)); dev=$(jq -r .device "$f"); [[ "$dev" == "__ALL__" ]] && dev="TODOS"; echo "[$i] $(jq -r .client "$f") / $dev - $(jq -r .hour "$f"):$(jq -r .minute "$f")"; done
- echo "[0] Voltar"; read -r -p "Numero: " opt; [[ "$opt" == 0 ]] && return 1; [[ "$opt" =~ ^[0-9]+$ ]] && ((opt>=1 && opt<=${#SCHEDULE_FILES[@]})) || { echo "Opcao invalida."; return 1; }; SELECTED_SCHEDULE="${SCHEDULE_FILES[opt-1]}"
-}
-schedule_edit(){
- local f id client device tm hh minute tmp; echo "========== ALTERAR HORARIO =========="; schedule_select_file || return; f="$SELECTED_SCHEDULE"; id=$(jq -r .id "$f"); client=$(jq -r .client "$f"); device=$(jq -r .device "$f")
- read -r -p "Novo horario HH:MM [0 cancela]: " tm; [[ "$tm" == 0 ]] && return; [[ "$tm" =~ ^([01][0-9]|2[0-3]):([0-5][0-9])$ ]] || { status_fail "Horario invalido."; return; }; hh="${BASH_REMATCH[1]}"; minute="${BASH_REMATCH[2]}"
- tmp="$BASE/tmp/schedule.$$"; jq --arg hour "$hh" --arg minute "$minute" '.hour=$hour | .minute=$minute' "$f" > "$tmp" && mv "$tmp" "$f"; chmod 600 "$f"; schedule_install_cron "$id" "$client" "$device" "$hh" "$minute"; status_ok "Horario alterado para $hh:$minute."
-}
-schedule_delete(){
- local f id; echo "========== EXCLUIR AGENDAMENTO =========="; schedule_select_file || return; f="$SELECTED_SCHEDULE"; id=$(jq -r .id "$f"); rm -f "/etc/cron.d/backup-manager-v3-$id" "$f"; status_ok "Agendamento $id excluido."
-}
-schedules_menu(){
- local opt; while :; do echo; echo "========== AGENDAMENTOS =========="; echo "[1] Listar agendamentos V3"; echo "[2] Criar agendamento diario"; echo "[3] Alterar horario"; echo "[4] Excluir agendamento"; echo "[5] Informacoes / seguranca"; echo "[0] Voltar"; read_key opt "Opcao: "; case "$opt" in
- 1) schedule_list;; 2) schedule_add;; 3) schedule_edit;; 4) schedule_delete;; 5) echo; echo "Os agendamentos V3 usam /etc/cron.d/backup-manager-v3-*."; echo "Os crons e scripts do V2 NAO sao alterados.";; 0) return;; *) echo "Opcao invalida.";; esac; done
-}
+schedule_select_file(){ local f i=0 opt; schedule_files; ((${#SCHEDULE_FILES[@]})) || { echo "Nenhum agendamento V3 cadastrado."; return 1; }; echo; for f in "${SCHEDULE_FILES[@]}"; do ((++i)) || true; echo "[$i] $(jq -r .client "$f") / $(jq -r .device "$f") - $(jq -r .hour "$f"):$(jq -r .minute "$f")"; done; echo "[0] Voltar"; read -r -p "Numero: " opt; [[ "$opt" == 0 ]] && return 1; [[ "$opt" =~ ^[0-9]+$ ]] && ((opt>=1 && opt<=${#SCHEDULE_FILES[@]})) || { echo "Opcao invalida."; return 1; }; SELECTED_SCHEDULE="${SCHEDULE_FILES[opt-1]}"; }
+schedule_edit(){ local f id client device tm hh minute tmp; schedule_select_file || return; f="$SELECTED_SCHEDULE"; id=$(jq -r .id "$f"); client=$(jq -r .client "$f"); device=$(jq -r .device "$f"); read -r -p "Novo horario HH:MM [0 cancela]: " tm; [[ "$tm" == 0 ]] && return; [[ "$tm" =~ ^([01][0-9]|2[0-3]):([0-5][0-9])$ ]] || { status_fail "Horario invalido."; return; }; hh="${BASH_REMATCH[1]}"; minute="${BASH_REMATCH[2]}"; tmp="$BASE/tmp/schedule.$$"; jq --arg hour "$hh" --arg minute "$minute" '.hour=$hour | .minute=$minute' "$f" > "$tmp" && mv "$tmp" "$f"; chmod 600 "$f"; schedule_install_cron "$id" "$client" "$device" "$hh" "$minute"; status_ok "Horario alterado para $hh:$minute."; }
+schedule_delete(){ local f id; schedule_select_file || return; f="$SELECTED_SCHEDULE"; id=$(jq -r .id "$f"); rm -f "/etc/cron.d/backup-manager-v3-$id" "$f"; status_ok "Agendamento $id excluido."; }
+schedules_menu(){ local opt; schedule_sync_missing; while :; do echo; echo "========== AGENDAMENTOS =========="; echo "[1] Listar agendamentos V3"; echo "[2] Reorganizar TODOS automaticamente"; echo "[3] Alterar horario individual"; echo "[4] Excluir agendamento"; echo "[5] Sincronizar equipamentos sem agendamento"; echo "[6] Informacoes"; echo "[0] Voltar"; read_key opt "Opcao: "; case "$opt" in 1) schedule_list;; 2) schedule_reorganize;; 3) schedule_edit;; 4) schedule_delete;; 5) schedule_sync_missing; schedule_list;; 6) echo; echo "Automatico: 02:00 em diante, 1 minuto entre equipamentos. V2 nao e alterado.";; 0) return;; *) echo "Opcao invalida.";; esac; done; }
 logs_menu(){
  local opt
  while :; do
