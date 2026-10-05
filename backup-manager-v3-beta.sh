@@ -479,18 +479,30 @@ list_devices_for_client(){
 }
 add_device_for_client(){ local save="$SELECTED_CLIENT"; SELECTED_CLIENT="$1"; add_device_skip_select "$1"; SELECTED_CLIENT="$save"; }
 add_device_skip_select(){
- local id="$1" name ip port username password file result rc opt
- echo; echo "========== ADICIONAR MIKROTIK - $id =========="; echo 'Digite 0 em qualquer campo para cancelar.'
- read -r -p 'Nome do dispositivo: ' name; [[ "$name" == 0 ]] && return; valid_id "$name" || { echo 'Nome invalido'; return; }
- file="$BASE/clientes/$id/$name.json"; [[ ! -e "$file" ]] || { echo 'Dispositivo ja cadastrado'; return; }
- read -r -p 'IP ou hostname: ' ip; [[ "$ip" == 0 ]] && return
- read -r -p 'Porta SSH [22]: ' port; [[ "$port" == 0 ]] && return; port=${port:-22}
- read -r -p 'Usuario: ' username; [[ "$username" == 0 ]] && return
- read -r -s -p 'Senha SSH [0 cancela]: ' password; echo; [[ "$password" == 0 ]] && return
- result=$(SSHPASS="$password" sshpass -e ssh -o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -p "$port" -- "$username@$ip" ':put "OK"' 2>&1) && rc=0 || rc=$?
- ((rc==0)) && [[ "$result" == *OK* ]] || { echo "Falha na conexao (codigo $rc): $result"; return 1; }
- jq -n --arg name "$name" --arg ip "$ip" --arg port "$port" --arg username "$username" --arg password "$password" '{name:$name,ip:$ip,port:$port,username:$username,password:$password,type:"mikrotik"}' > "$file" && chmod 600 "$file"
- echo "MikroTik $name cadastrado com sucesso em $id."
+ local id="$1" name ip port username password file result rc opt v
+ echo; echo "========== ADICIONAR MIKROTIK - $id =========="; echo "Digite 0 em qualquer campo para cancelar."
+ read -r -p "Nome do dispositivo: " name; [[ "$name" == 0 ]] && return; valid_id "$name" || { echo "Nome invalido"; return; }
+ file="$BASE/clientes/$id/$name.json"; [[ ! -e "$file" ]] || { echo "Dispositivo ja cadastrado"; return; }
+ read -r -p "IP ou hostname: " ip; [[ "$ip" == 0 ]] && return
+ read -r -p "Porta SSH [22]: " port; [[ "$port" == 0 ]] && return; [[ -n "$port" ]] || port=22
+ read -r -p "Usuario: " username; [[ "$username" == 0 ]] && return
+ read -r -s -p "Senha SSH [0 cancela]: " password; echo; [[ "$password" == 0 ]] && return
+ while :; do
+  result=$(SSHPASS="$password" sshpass -e ssh -o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -p "$port" -- "$username@$ip" ':put "OK"' 2>&1) && rc=0 || rc=$?
+  if ((rc==0)) && [[ "$result" == *OK* ]]; then jq -n --arg name "$name" --arg ip "$ip" --arg port "$port" --arg username "$username" --arg password "$password" '{name:$name,ip:$ip,port:$port,username:$username,password:$password,type:"mikrotik"}' > "$file"; chmod 600 "$file"; echo "MikroTik $name cadastrado com sucesso em $id."; return 0; fi
+  echo; echo "Falha na conexao (codigo $rc):"; printf "%s\n" "$result"
+  echo; echo "[1] Tentar novamente"; echo "[2] Alterar IP/hostname"; echo "[3] Alterar porta SSH"; echo "[4] Alterar usuario"; echo "[5] Alterar senha"; echo "[0] Cancelar cadastro"
+  read_key opt "Opcao: "
+  case "$opt" in
+   1) ;;
+   2) read -r -p "Novo IP/hostname [0 cancela]: " v; [[ "$v" == 0 ]] || ip="$v";;
+   3) read -r -p "Nova porta SSH [0 cancela]: " v; [[ "$v" == 0 ]] || port="$v";;
+   4) read -r -p "Novo usuario [0 cancela]: " v; [[ "$v" == 0 ]] || username="$v";;
+   5) read -r -s -p "Nova senha [0 cancela]: " v; echo; [[ "$v" == 0 ]] || password="$v";;
+   0) echo "Cadastro cancelado."; return 0;;
+   *) echo "Opcao invalida.";;
+  esac
+ done
 }
 edit_device_for_client(){ local id="$1"; echo; select_device_text "$id" || return; local name="$SELECTED_DEVICE" file="$BASE/clientes/$id/$SELECTED_DEVICE.json" opt v; while :; do echo; echo "========== ALTERAR EQUIPAMENTO: $name =========="; echo '[1] IP/hostname'; echo '[2] Porta SSH'; echo '[3] Usuario'; echo '[4] Senha'; echo '[5] Testar conexao'; echo '[0] Voltar'; read_key opt 'Opcao: '; case "$opt" in 1) read -r -p 'Novo IP/hostname [0 cancela]: ' v; [[ "$v" == 0 ]] || jq --arg v "$v" '.ip=$v' "$file" > "$BASE/tmp/dev.$$" && mv "$BASE/tmp/dev.$$" "$file";; 2) read -r -p 'Nova porta [0 cancela]: ' v; [[ "$v" == 0 ]] || { jq --arg v "$v" '.port=$v' "$file" > "$BASE/tmp/dev.$$" && mv "$BASE/tmp/dev.$$" "$file"; };; 3) read -r -p 'Novo usuario [0 cancela]: ' v; [[ "$v" == 0 ]] || { jq --arg v "$v" '.username=$v' "$file" > "$BASE/tmp/dev.$$" && mv "$BASE/tmp/dev.$$" "$file"; };; 4) read -r -s -p 'Nova senha [0 cancela]: ' v; echo; [[ "$v" == 0 ]] || { jq --arg v "$v" '.password=$v' "$file" > "$BASE/tmp/dev.$$" && mv "$BASE/tmp/dev.$$" "$file"; };; 5) test_device_connection "$id" "$name" || true;; 0) chmod 600 "$file"; return;; esac; chmod 600 "$file"; done; }
 delete_device_for_client(){ local id="$1" name file confirm; select_device_text "$id" || return; name="$SELECTED_DEVICE"; file="$BASE/clientes/$id/$name.json"; echo "Equipamento: $name"; echo 'Backups historicos serao PRESERVADOS.'; read -r -p 'Digite EXCLUIR para confirmar: ' confirm; [[ "$confirm" == EXCLUIR ]] || return; rm -f -- "$file"; echo 'Equipamento removido.'; }
