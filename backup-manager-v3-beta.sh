@@ -259,6 +259,15 @@ notify(){
  [[ -n "$token" && -n "$chat" ]] || return 1
  curl -fsS --connect-timeout 10 --max-time 30 -X POST "https://api.telegram.org/bot${token}/sendMessage" --data-urlencode "chat_id=$chat" --data-urlencode "text=$msg" | jq -e '.ok==true' >/dev/null
 }
+notify_document(){
+ local client file caption cfg token chat
+ client="${1:-}"; file="${2:-}"; caption="${3:-}"
+ cfg="$BASE/clientes/$client/telegram.json"
+ [[ -f "$cfg" && -s "$file" ]] || return 1
+ token=$(jq -r '.token // ""' "$cfg"); chat=$(jq -r '.chat // ""' "$cfg")
+ [[ -n "$token" && -n "$chat" ]] || return 1
+ curl -fsS --connect-timeout 10 --max-time 120 -X POST "https://api.telegram.org/bot${token}/sendDocument" -F "chat_id=$chat" -F "document=@$file" -F "caption=$caption" | jq -e '.ok==true' >/dev/null
+}
 run_backup(){
  local client name file
  client="${1:-}"; name="${2:-}"
@@ -279,7 +288,7 @@ run_backup(){
  else
    SSHPASS="$password" sshpass -e ssh -o ConnectTimeout=12 -o StrictHostKeyChecking=accept-new -p "$port" -- "$username@$ip" "/file remove [find where name=\"$remote\"]" >/dev/null 2>&1 || true
    echo "$(date -Is) OK $client/$name $dest/$basename.tar.gz" >> "$BASE/logs/execucoes.log"
-   if ! notify "$client" "✅ BACKUP OK | Cliente: $client | Equipamento: $name | IP: $ip | Arquivo: $basename.tar.gz"; then echo "$(date -Is) AVISO Telegram indisponivel $client/$name" >> "$BASE/logs/execucoes.log"; fi
+   if ! notify_document "$client" "$dest/$basename.tar.gz" "💾 MikroTik $name - Backup do dia $(date +%d/%m/%Y)"; then echo "$(date -Is) AVISO Falha ao enviar arquivo Telegram $client/$name" >> "$BASE/logs/execucoes.log"; notify "$client" "✅ BACKUP OK | Cliente: $client | Equipamento: $name | IP: $ip | Arquivo salvo localmente: $basename.tar.gz" || true; fi
    rm -rf -- "$temp"; echo "Backup salvo: $dest/$basename.tar.gz"; return 0
  fi
  echo "$(date -Is) FALHA $client/$name etapa=$step motivo=$reason" >> "$BASE/logs/execucoes.log"
