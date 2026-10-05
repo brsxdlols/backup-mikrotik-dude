@@ -514,7 +514,7 @@ add_device_skip_select(){
  read -r -s -p "Senha SSH [0 cancela]: " password; echo; [[ "$password" == 0 ]] && return
  while :; do
   result=$(SSHPASS="$password" sshpass -e ssh -o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -p "$port" -- "$username@$ip" ':put "OK"' 2>&1) && rc=0 || rc=$?
-  if ((rc==0)) && [[ "$result" == *OK* ]]; then jq -n --arg name "$name" --arg ip "$ip" --arg port "$port" --arg username "$username" --arg password "$password" '{name:$name,ip:$ip,port:$port,username:$username,password:$password,type:"mikrotik"}' > "$file"; chmod 600 "$file"; status_ok "MikroTik $name cadastrado com sucesso em $id."; echo; status_info "Executando primeiro backup para validar o equipamento..."; if run_backup "$id" "$name"; then status_ok "Cadastro validado e primeiro backup concluido."; else status_fail "Equipamento cadastrado, mas o primeiro backup falhou. O cadastro foi mantido para correcao."; fi; return 0; fi
+  if ((rc==0)) && [[ "$result" == *OK* ]]; then jq -n --arg name "$name" --arg ip "$ip" --arg port "$port" --arg username "$username" --arg password "$password" '{name:$name,ip:$ip,port:$port,username:$username,password:$password,type:"mikrotik"}' > "$file"; chmod 600 "$file"; status_ok "MikroTik $name cadastrado com sucesso em $id."; schedule_ensure_client_auto "$id"; echo; status_info "Executando primeiro backup para validar o equipamento..."; if run_backup "$id" "$name"; then status_ok "Cadastro validado e primeiro backup concluido."; else status_fail "Equipamento cadastrado, mas o primeiro backup falhou. O cadastro foi mantido para correcao."; fi; return 0; fi
   echo; echo "Falha na conexao (codigo $rc):"; printf "%s\n" "$result"
   echo; echo "[1] Tentar novamente"; echo "[2] Alterar IP/hostname"; echo "[3] Alterar porta SSH"; echo "[4] Alterar usuario"; echo "[5] Alterar senha"; echo "[0] Cancelar cadastro"
   read_key opt "Opcao: "
@@ -622,6 +622,16 @@ schedule_install_cron(){
  local id="$1" client="$2" device="$3" hour="$4" minute="$5" cron="/etc/cron.d/backup-manager-v3-$id" cmd
  if [[ "$device" == "__ALL__" ]]; then cmd=$(printf "%q run-all %q" "$0" "$client"); else cmd=$(printf "%q run %q %q" "$0" "$client" "$device"); fi
  printf "# Backup Manager V3 - %s\n%s %s * * * root %s >> %q 2>&1\n" "$id" "$minute" "$hour" "$cmd" "$BASE/logs/cron-$id.log" > "$cron"; chmod 644 "$cron"
+}
+schedule_ensure_client_auto(){
+ local client="$1" id cfg hour minute
+ schedule_dir; id="$client-TODOS"; cfg="$BASE/config/agendamentos/$id.json"
+ if [[ -f "$cfg" ]]; then return 0; fi
+ # Horario automatico e deterministico entre 02:00 e 04:59, distribuido por cliente.
+ local sum; sum=$(printf "%s" "$client" | cksum | awk '{print $1}'); hour=$((2 + (sum % 3))); minute=$(((sum / 3) % 60))
+ jq -n --arg id "$id" --arg client "$client" --arg device "__ALL__" --arg hour "$(printf "%02d" "$hour")" --arg minute "$(printf "%02d" "$minute")" '{id:$id,client:$client,device:$device,hour:$hour,minute:$minute,enabled:true,automatic:true}' > "$cfg"; chmod 600 "$cfg"
+ schedule_install_cron "$id" "$client" "__ALL__" "$(printf "%02d" "$hour")" "$(printf "%02d" "$minute")"
+ status_ok "Agendamento automatico criado para $client: TODOS os equipamentos as $(printf "%02d:%02d" "$hour" "$minute")."
 }
 schedule_choose_target(){
  local client="$1" opt; echo; echo "========== ALVO DO AGENDAMENTO =========="; echo "[1] TODOS os equipamentos do cliente"; echo "[2] Selecionar um equipamento"; echo "[0] Voltar"; read_key opt "Opcao: "
