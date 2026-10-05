@@ -7,6 +7,13 @@ chmod 700 "$BASE" "$BASE"/{clientes,config,logs,backups,tmp}
 need(){ command -v "$1" >/dev/null || { echo "Dependencia ausente: $1"; exit 1; }; }
 for x in ssh sshpass scp curl jq flock tar; do need "$x"; done
 valid_id(){ [[ "$1" =~ ^[a-zA-Z0-9_-]+$ ]]; }
+read_key(){
+ local __var="$1" __prompt="$2" __key
+ printf '%s' "$__prompt"
+ IFS= read -r -s -n1 __key || return 1
+ printf '%s\n' "$__key"
+ printf -v "$__var" '%s' "$__key"
+}
 read_secret(){ local var="$1"; read -r -s -p 'Senha (oculta): ' "$var"; echo; }
 add_client(){
  local id token chat result tmp
@@ -98,7 +105,7 @@ select_client(){
  echo '[0] Voltar'
  echo '========================================'
  while :; do
-   read -r -p 'Escolha o numero: ' choice
+   read_key choice 'Escolha o numero: '
    [[ "$choice" == 0 ]] && return 1
    if [[ "$choice" =~ ^[0-9]+$ ]] && (( 10#$choice >= 1 && 10#$choice <= ${#clients[@]} )); then
      SELECTED_CLIENT="${clients[10#$choice-1]}"
@@ -286,7 +293,7 @@ ui_edit_client(){
  while :; do
   echo; echo "========== ALTERAR CLIENTE: $id =========="
   echo '[1] Alterar nome'; echo '[2] Alterar Bot Token'; echo '[3] Alterar Chat ID'; echo '[4] Testar Telegram'; echo '[0] Voltar'
-  read -r -p 'Opcao: ' opt
+  read_key opt 'Opcao: '
   case "$opt" in
    1) read -r -p 'Novo nome: ' new; valid_id "$new" || { echo 'Nome invalido'; continue; }; [[ ! -e "$BASE/clientes/$new" ]] || { echo 'Cliente ja existe'; continue; }; mv -- "$BASE/clientes/$id" "$BASE/clientes/$new"; if [[ -d "$BASE/backups/$id" && ! -e "$BASE/backups/$new" ]]; then mv -- "$BASE/backups/$id" "$BASE/backups/$new"; fi; id="$new"; echo 'Nome alterado.';;
    2) read -r -s -p 'Novo Bot Token (oculto): ' token; echo; jq --arg v "$token" '.token=$v' "$BASE/clientes/$id/telegram.json" > "$BASE/tmp/tg.$$" && mv "$BASE/tmp/tg.$$" "$BASE/clientes/$id/telegram.json"; chmod 600 "$BASE/clientes/$id/telegram.json";;
@@ -308,7 +315,7 @@ clients_menu(){
  local opt
  while :; do
   echo; echo '========== GERENCIAR CLIENTES =========='; echo '[1] Listar clientes'; echo '[2] Adicionar cliente'; echo '[3] Alterar cliente'; echo '[4] Excluir cliente'; echo '[0] Voltar'
-  read -r -p 'Opcao: ' opt
+  read_key opt 'Opcao: '
   case "$opt" in 1) show_clients;; 2) add_client;; 3) edit_client;; 4) delete_client;; 0) return;; *) echo 'Opcao invalida';; esac
  done
 }
@@ -316,7 +323,7 @@ menu(){
  local opt c d
  while :; do
   echo; echo '========================================'; echo '       BACKUP MANAGER V3 BETA'; echo '========================================'; echo '[1] Gerenciar clientes'; echo '[2] Gerenciar equipamentos'; echo '[3] Executar backup manual'; echo '[4] Agendamentos'; echo '[5] Consultar logs'; echo '[6] Configuracoes'; echo '[0] Sair'; echo '========================================'
-  read -r -p 'Escolha uma opcao: ' opt
+  read_key opt 'Escolha uma opcao: '
   case "$opt" in
    1) clients_menu;;
    2) echo 'Gerenciamento de equipamentos: proxima etapa.';;
