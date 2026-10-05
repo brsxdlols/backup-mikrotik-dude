@@ -396,6 +396,79 @@ delete_client(){
  echo 'Backups historicos serao PRESERVADOS.'; read -r -p 'Digite EXCLUIR para confirmar: ' confirm
  [[ "$confirm" == EXCLUIR ]] || { echo 'Cancelado.'; return; }; rm -f -- "$BASE/clientes/$id/telegram.json"; rmdir -- "$BASE/clientes/$id" && echo 'Cliente removido. Backups preservados.' || echo 'Nao foi possivel remover o cadastro.'
 }
+list_devices_text(){
+ local id f n=0 name ip port user
+ select_client || return; id="$SELECTED_CLIENT"
+ echo; echo '=========================================================================='
+ echo "                 EQUIPAMENTOS - CLIENTE: $id"
+ echo '=========================================================================='
+ printf ' %-4s %-22s %-18s %-7s %s\n' 'N' 'EQUIPAMENTO' 'IP/HOST' 'PORTA' 'USUARIO'
+ echo '--------------------------------------------------------------------------'
+ for f in "$BASE/clientes/$id/"*.json; do
+  [[ -f "$f" && "${f##*/}" != telegram.json ]] || continue; ((++n)); name="${f##*/}"; name="${name%.json}"
+  ip=$(jq -r '.ip // "-"' "$f"); port=$(jq -r '.port // "-"' "$f"); user=$(jq -r '.username // "-"' "$f")
+  printf ' %-4d %-22.22s %-18.18s %-7s %s\n' "$n" "$name" "$ip" "$port" "$user"
+ done
+ ((n)) || echo ' Nenhum equipamento cadastrado.'
+ echo '--------------------------------------------------------------------------'; echo '[ENTER] Voltar'; read -r
+}
+select_device_text(){
+ local id="$1" f choice i=0 total name; local -a devs=()
+ for f in "$BASE/clientes/$id/"*.json; do [[ -f "$f" && "${f##*/}" != telegram.json ]] || continue; devs+=("${f##*/}"); done
+ total=${#devs[@]}; ((total)) || { echo 'Nenhum equipamento cadastrado.'; return 1; }
+ echo; echo '========== SELECIONAR EQUIPAMENTO =========='
+ for f in "${devs[@]}"; do ((++i)); name="${f%.json}"; printf '[%d] %s\n' "$i" "$name"; done
+ echo '[0] Voltar'
+ while :; do read_key choice 'Opcao: '; [[ "$choice" == 0 ]] && return 1
+  if [[ "$choice" =~ ^[0-9]+$ ]] && ((10#$choice>=1 && 10#$choice<=total)); then name="${devs[10#$choice-1]}"; SELECTED_DEVICE="${name%.json}"; return 0; fi
+  echo 'Opcao invalida.'
+ done
+}
+test_device_connection(){
+ local id="$1" name="$2" file="$BASE/clientes/$1/$2.json" ip port username password result rc
+ ip=$(jq -r .ip "$file"); port=$(jq -r .port "$file"); username=$(jq -r .username "$file"); password=$(jq -r .password "$file")
+ echo "Testando SSH $name em $ip:$port..."
+ result=$(SSHPASS="$password" sshpass -e ssh -o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -p "$port" -- "$username@$ip" ':put "OK"' 2>&1) && rc=0 || rc=$?
+ if ((rc==0)) && [[ "$result" == *OK* ]]; then echo 'OK - conexao SSH funcionando.'; return 0; fi
+ echo "FALHA SSH codigo $rc: $result"; return 1
+}
+edit_device(){
+ local id name file opt v
+ select_client || return; id="$SELECTED_CLIENT"; select_device_text "$id" || return; name="$SELECTED_DEVICE"; file="$BASE/clientes/$id/$name.json"
+ while :; do
+  echo; echo "========== ALTERAR EQUIPAMENTO: $name =========="
+  echo '[1] Alterar IP/hostname'; echo '[2] Alterar porta SSH'; echo '[3] Alterar usuario'; echo '[4] Alterar senha'; echo '[5] Testar conexao'; echo '[0] Voltar'
+  read_key opt 'Opcao: '
+  case "$opt" in
+   1) read -r -p 'Novo IP/hostname [0 cancela]: ' v; [[ "$v" == 0 ]] && continue; jq --arg v "$v" '.ip=$v' "$file" > "$BASE/tmp/dev.$$" && mv "$BASE/tmp/dev.$$" "$file";;
+   2) read -r -p 'Nova porta [0 cancela]: ' v; [[ "$v" == 0 ]] && continue; [[ "$v" =~ ^[0-9]+$ ]] && ((10#$v>=1&&10#$v<=65535)) || { echo 'Porta invalida.'; continue; }; jq --arg v "$v" '.port=$v' "$file" > "$BASE/tmp/dev.$$" && mv "$BASE/tmp/dev.$$" "$file";;
+   3) read -r -p 'Novo usuario [0 cancela]: ' v; [[ "$v" == 0 ]] && continue; jq --arg v "$v" '.username=$v' "$file" > "$BASE/tmp/dev.$$" && mv "$BASE/tmp/dev.$$" "$file";;
+   4) read -r -s -p 'Nova senha [0 cancela]: ' v; echo; [[ "$v" == 0 ]] && continue; jq --arg v "$v" '.password=$v' "$file" > "$BASE/tmp/dev.$$" && mv "$BASE/tmp/dev.$$" "$file";;
+   5) test_device_connection "$id" "$name" || true;; 0) chmod 600 "$file"; return;; *) echo 'Opcao invalida.';;
+  esac
+  chmod 600 "$file"
+ done
+}
+delete_device(){
+ local id name file confirm
+ select_client || return; id="$SELECTED_CLIENT"; select_device_text "$id" || return; name="$SELECTED_DEVICE"; file="$BASE/clientes/$id/$name.json"
+ echo; echo '========== EXCLUIR EQUIPAMENTO =========='; echo "Cliente: $id"; echo "Equipamento: $name"; echo 'Backups historicos serao PRESERVADOS.'
+ read -r -p 'Digite EXCLUIR para confirmar: ' confirm; [[ "$confirm" == EXCLUIR ]] || { echo 'Cancelado.'; return; }
+ rm -f -- "$file"; echo 'Equipamento removido. Backups preservados.'
+}
+devices_menu(){
+ local opt cid
+ while :; do
+  echo; echo '========== GERENCIAR EQUIPAMENTOS =========='
+  echo '[1] Listar equipamentos'; echo '[2] Adicionar MikroTik'; echo '[3] Alterar equipamento'; echo '[4] Excluir equipamento'; echo '[5] Testar conexao SSH'; echo '[0] Voltar'
+  read_key opt 'Opcao: '
+  case "$opt" in
+   1) list_devices_text;; 2) add_device;; 3) edit_device;; 4) delete_device;;
+   5) select_client || continue; cid="$SELECTED_CLIENT"; select_device_text "$cid" || continue; test_device_connection "$cid" "$SELECTED_DEVICE" || true;;
+   0) return;; *) echo 'Opcao invalida.';;
+  esac
+ done
+}
 clients_menu(){
  local opt
  while :; do
@@ -411,7 +484,7 @@ menu(){
   read_key opt 'Escolha uma opcao: '
   case "$opt" in
    1) clients_menu;;
-   2) echo 'Gerenciamento de equipamentos: proxima etapa.';;
+   2) devices_menu;;
    3) select_client || continue; c="$SELECTED_CLIENT"; read -r -p 'Nome do dispositivo: ' d; run_backup "$c" "$d" || true;;
    4) echo 'Agendamentos: modulo ainda nao implementado nesta beta.';;
    5) tail -n 30 "$BASE/logs/execucoes.log" 2>/dev/null || echo 'Nenhum log ainda.';;
