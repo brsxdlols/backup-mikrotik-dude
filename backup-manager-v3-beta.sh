@@ -40,11 +40,18 @@ add_client(){
      --yes-label 'Salvar' --no-label 'Cancelar' \
      --yesno "Cliente: $id\nTelegram: $([[ -n "$token" && -n "$chat" ]] && echo 'Configurado' || echo 'Pendente')\n\nDeseja salvar o cadastro?" 12 70; then return 0; fi
  else
+   echo
+   echo '========== ADICIONAR CLIENTE =========='
+   echo 'Digite 0 em qualquer campo para cancelar e voltar.'
+   echo
    read -r -p 'Identificador do cliente (letras/numeros/-/_): ' id
+   [[ "$id" == 0 ]] && { echo 'Cadastro cancelado.'; return; }
    valid_id "$id" || { echo 'Identificador invalido'; return; }
    [[ ! -e "$BASE/clientes/$id" ]] || { echo 'Cliente ja existe'; return; }
    read -r -s -p 'Bot Token Telegram (oculto; vazio para depois): ' token; echo
+   [[ "$token" == 0 ]] && { echo 'Cadastro cancelado.'; return; }
    read -r -p 'Chat ID Telegram: ' chat
+   [[ "$chat" == 0 ]] && { echo 'Cadastro cancelado.'; return; }
  fi
  mkdir -m 700 "$BASE/clientes/$id" || return 1
  if ! jq -n --arg token "$token" --arg chat "$chat" '{token:$token,chat:$chat}' > "$BASE/clientes/$id/telegram.json"; then
