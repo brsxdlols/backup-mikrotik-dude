@@ -108,41 +108,72 @@ select_client(){
  done
 }
 add_device(){
- local id name ip port username password type file
+ local id name ip port username password file result rc opt tmp err shorterr
  select_client || return
  id="$SELECTED_CLIENT"
- read -r -p 'Nome do dispositivo: ' name
- valid_id "$name" || { echo 'Nome invalido'; return; }
+
+ if (( HAS_DIALOG )); then
+   tmp=$(mktemp "$BASE/tmp/device-form.XXXXXXXX") || return 1
+   err=$(mktemp "$BASE/tmp/device-error.XXXXXXXX") || { rm -f "$tmp"; return 1; }
+   chmod 600 "$tmp" "$err"
+
+   dialog --backtitle 'BACKUP MANAGER V3 BETA' --title "NOVO MIKROTIK - $id" --ok-label 'Proximo' --cancel-label 'Cancelar' --inputbox 'Nome do dispositivo:' 10 72 2>"$tmp" || { rm -f "$tmp" "$err"; return; }
+   name=$(cat "$tmp")
+   valid_id "$name" || { rm -f "$tmp" "$err"; ui_message 'Nome invalido. Use apenas letras, numeros, - ou _.'; return; }
+   file="$BASE/clientes/$id/$name.json"
+   [[ ! -e "$file" ]] || { rm -f "$tmp" "$err"; ui_message "O dispositivo $name ja esta cadastrado em $id."; return; }
+
+   dialog --backtitle 'BACKUP MANAGER V3 BETA' --title "$name - ENDERECO" --ok-label 'Proximo' --cancel-label 'Cancelar' --inputbox 'IP ou hostname:' 10 72 2>"$tmp" || { rm -f "$tmp" "$err"; return; }
+   ip=$(cat "$tmp")
+   dialog --backtitle 'BACKUP MANAGER V3 BETA' --title "$name - SSH" --ok-label 'Proximo' --cancel-label 'Cancelar' --inputbox 'Porta SSH:' 10 60 '22' 2>"$tmp" || { rm -f "$tmp" "$err"; return; }
+   port=$(cat "$tmp"); port=${port:-22}
+   dialog --backtitle 'BACKUP MANAGER V3 BETA' --title "$name - SSH" --ok-label 'Proximo' --cancel-label 'Cancelar' --inputbox 'Usuario SSH:' 10 65 2>"$tmp" || { rm -f "$tmp" "$err"; return; }
+   username=$(cat "$tmp")
+   dialog --backtitle 'BACKUP MANAGER V3 BETA' --title "$name - SSH" --ok-label 'Testar conexao' --cancel-label 'Cancelar' --insecure --passwordbox 'Senha SSH:' 10 65 2>"$tmp" || { rm -f "$tmp" "$err"; return; }
+   password=$(cat "$tmp")
+
+   while :; do
+     if ! [[ "$port" =~ ^[0-9]+$ ]] || ((10#$port<1 || 10#$port>65535)) || [[ -z "$ip" || -z "$username" ]]; then
+       ui_message 'IP/hostname, usuario ou porta SSH invalidos.'
+       opt=$(dialog --stdout --backtitle 'BACKUP MANAGER V3 BETA' --title 'CORRIGIR DADOS' --cancel-label 'Cancelar' --menu 'Selecione o campo para corrigir:' 17 72 8 2 'IP ou hostname' 3 'Usuario SSH' 4 'Senha SSH' 5 'Porta SSH') || { rm -f "$tmp" "$err"; return; }
+     else
+       dialog --backtitle 'BACKUP MANAGER V3 BETA' --title 'TESTANDO CONEXAO' --infobox "Conectando em $ip:$port...\nAguarde." 7 55
+       : >"$err"
+       result=$(SSHPASS="$password" sshpass -e ssh -o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -p "$port" -- "$username@$ip" ':put "OK"' 2>"$err") && rc=0 || rc=$?
+       if ((rc==0)) && [[ "$result" == *OK* ]]; then
+         if dialog --backtitle 'BACKUP MANAGER V3 BETA' --title 'CONEXAO OK' --yes-label 'Salvar' --no-label 'Cancelar' --yesno "Conexao realizada com sucesso.\n\nCliente: $id\nDispositivo: $name\nIP: $ip\nPorta: $port\nUsuario: $username\n\nSalvar equipamento?" 15 68; then
+           break
+         else rm -f "$tmp" "$err"; return; fi
+       fi
+       shorterr=$(tail -n 3 "$err" | tr '\n' ' ' | cut -c1-220)
+       opt=$(dialog --stdout --backtitle 'BACKUP MANAGER V3 BETA' --title "FALHA DE CONEXAO - CODIGO $rc" --cancel-label 'Cancelar' --menu "Nao foi possivel conectar.\n${shorterr:-Verifique os dados informados.}\n\nO que deseja fazer?" 21 86 8 1 'Tentar novamente' 2 'Alterar IP/hostname' 3 'Alterar usuario' 4 'Alterar senha' 5 'Alterar porta SSH') || { rm -f "$tmp" "$err"; return; }
+       [[ "$opt" == 1 ]] && continue
+     fi
+     case "$opt" in
+       2) dialog --stdout --backtitle 'BACKUP MANAGER V3 BETA' --title 'ALTERAR IP/HOSTNAME' --inputbox 'IP ou hostname:' 10 72 "$ip" >"$tmp" || continue; ip=$(cat "$tmp");;
+       3) dialog --stdout --backtitle 'BACKUP MANAGER V3 BETA' --title 'ALTERAR USUARIO' --inputbox 'Usuario SSH:' 10 65 "$username" >"$tmp" || continue; username=$(cat "$tmp");;
+       4) dialog --stdout --backtitle 'BACKUP MANAGER V3 BETA' --title 'ALTERAR SENHA' --insecure --passwordbox 'Nova senha SSH:' 10 65 >"$tmp" || continue; password=$(cat "$tmp");;
+       5) dialog --stdout --backtitle 'BACKUP MANAGER V3 BETA' --title 'ALTERAR PORTA' --inputbox 'Porta SSH:' 10 60 "$port" >"$tmp" || continue; port=$(cat "$tmp");;
+     esac
+   done
+   rm -f "$tmp" "$err"
+ else
+   read -r -p 'Nome do dispositivo: ' name
+   valid_id "$name" || { echo 'Nome invalido'; return; }
+   file="$BASE/clientes/$id/$name.json"
+   [[ ! -e "$file" ]] || { echo 'Dispositivo ja cadastrado'; return; }
+   read -r -p 'IP ou hostname: ' ip
+   read -r -p 'Porta SSH [22]: ' port; port=${port:-22}
+   read -r -p 'Usuario: ' username
+   read_secret password
+   result=$(SSHPASS="$password" sshpass -e ssh -o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -p "$port" -- "$username@$ip" ':put "OK"' 2>&1) && rc=0 || rc=$?
+   ((rc==0)) && [[ "$result" == *OK* ]] || { echo "Falha na conexao (codigo $rc): $result"; return 1; }
+ fi
+
  file="$BASE/clientes/$id/$name.json"
- [[ ! -e "$file" ]] || { echo 'Dispositivo ja cadastrado'; return; }
- read -r -p 'IP ou hostname: ' ip
- read -r -p 'Porta SSH [22]: ' port; port=${port:-22}
- read -r -p 'Usuario: ' username
- read_secret password
- while :; do
-   if [[ "$port" =~ ^[0-9]+$ ]] && ((10#$port>=1 && 10#$port<=65535)) && [[ -n "$ip" && -n "$username" ]]; then
-     local result rc
-     result=$(SSHPASS="$password" sshpass -e ssh -o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -p "$port" -- "$username@$ip" ':put "OK"' 2>&1) && rc=0 || rc=$?
-     if ((rc==0)) && [[ "$result" == *OK* ]]; then echo 'Conexao OK'; break; fi
-     echo "Falha na conexao (codigo $rc). Verifique IP, porta, SSH e autenticacao."
-   else echo 'IP, usuario ou porta invalidos'; fi
-   echo
-   echo '========== FALHA DE CONEXAO =========='
-   echo '[1] Tentar novamente com os mesmos dados'
-   echo '[2] Alterar IP'
-   echo '[3] Alterar usuario'
-   echo '[4] Alterar senha'
-   echo '[5] Alterar porta SSH'
-   echo '[0] Cancelar cadastro'
-   echo '======================================'
-   read -r -p 'Opcao: ' opt
-   case "$opt" in
-     1) ;; 2) read -r -p 'Novo IP: ' ip;; 3) read -r -p 'Novo usuario: ' username;; 4) read_secret password;; 5) read -r -p 'Nova porta: ' port;; 0) return;; *) echo 'Opcao invalida';;
-   esac
- done
- jq -n --arg name "$name" --arg ip "$ip" --arg port "$port" --arg username "$username" --arg password "$password" '{name:$name,ip:$ip,port:$port,username:$username,password:$password,type:"mikrotik"}' > "$file"
+ jq -n --arg name "$name" --arg ip "$ip" --arg port "$port" --arg username "$username" --arg password "$password" '{name:$name,ip:$ip,port:$port,username:$username,password:$password,type:"mikrotik"}' > "$file" || return 1
  chmod 600 "$file"
- echo 'Dispositivo salvo. Nenhum agendamento foi criado.'
+ ui_message "MikroTik $name cadastrado com sucesso em $id.\n\nNenhum agendamento foi criado."
 }
 notify(){
  local client="$1" msg="$2" cfg="$BASE/clientes/$client/telegram.json" token chat
@@ -265,9 +296,7 @@ ui_menu(){
        if [[ "$choice" == 2 ]]; then
          add_client
        else
-         clear
          add_device
-         read -r -p 'Pressione ENTER para continuar...' || true
        fi
        ;;
      4)
