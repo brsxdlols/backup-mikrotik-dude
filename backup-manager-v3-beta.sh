@@ -269,35 +269,39 @@ notify_document(){
  curl -fsS --connect-timeout 10 --max-time 120 -X POST "https://api.telegram.org/bot${token}/sendDocument" -F "chat_id=$chat" -F "document=@$file" -F "caption=$caption" | jq -e '.ok==true' >/dev/null
 }
 run_backup(){
- local client name file
- client="${1:-}"; name="${2:-}"
- file="$BASE/clientes/$client/$name.json"
+ local client name file ip port username password lock temp stamp identity safe_id remote local_rsc zipfile dest err step reason size caption failed=0
+ client="${1:-}"; name="${2:-}"; file="$BASE/clientes/$client/$name.json"
  valid_id "$client" && valid_id "$name" && [[ -f "$file" ]] || { echo 'Dispositivo nao encontrado'; return 1; }
- local ip port username password lock temp stamp basename remote localfile dest err rc step reason
  ip=$(jq -r '.ip' "$file"); port=$(jq -r '.port' "$file"); username=$(jq -r '.username' "$file"); password=$(jq -r '.password' "$file")
- lock="$BASE/tmp/$client-$name.lock"
- exec 9>"$lock"; flock -n 9 || { echo 'Backup ja em execucao'; return 1; }
- temp=$(mktemp -d "$BASE/tmp/run.XXXXXXXX")
- stamp=$(date +%Y%m%d-%H%M%S); basename="bkp-$client-$name-$stamp"; remote="$basename.rsc"; localfile="$temp/$remote"
- dest="$BASE/backups/$client/$name"; mkdir -p "$dest"; chmod 700 "$dest"
- err="$temp/error"; step='export'; reason=''
- if ! SSHPASS="$password" sshpass -e ssh -o ConnectTimeout=12 -o StrictHostKeyChecking=accept-new -p "$port" -- "$username@$ip" "/export file=$basename" 2>"$err"; then reason='Falha SSH/autenticacao/exportacao';
- elif ! SSHPASS="$password" sshpass -e scp -O -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -P "$port" -- "$username@$ip:/$remote" "$localfile" 2>"$err"; then step='download'; reason='Falha ao transferir backup por SCP';
- elif [[ ! -s "$localfile" ]]; then step='validacao'; reason='Arquivo de backup vazio';
- elif ! tar -czf "$dest/$basename.tar.gz" -C "$temp" "$remote" 2>"$err"; then step='compactacao'; reason='Falha ao compactar backup';
- else
-   SSHPASS="$password" sshpass -e ssh -o ConnectTimeout=12 -o StrictHostKeyChecking=accept-new -p "$port" -- "$username@$ip" "/file remove [find where name=\"$remote\"]" >/dev/null 2>&1 || true
-   echo "$(date -Is) OK $client/$name $dest/$basename.tar.gz" >> "$BASE/logs/execucoes.log"
-   if ! notify_document "$client" "$dest/$basename.tar.gz" "💾 MikroTik $name - Backup do dia $(date +%d/%m/%Y)"; then echo "$(date -Is) AVISO Falha ao enviar arquivo Telegram $client/$name" >> "$BASE/logs/execucoes.log"; notify "$client" "✅ BACKUP OK | Cliente: $client | Equipamento: $name | IP: $ip | Arquivo salvo localmente: $basename.tar.gz" || true; fi
-   rm -rf -- "$temp"; echo "Backup salvo: $dest/$basename.tar.gz"; return 0
+ lock="$BASE/tmp/$client-$name.lock"; exec 9>"$lock"; flock -n 9 || { echo 'Backup ja em execucao'; return 1; }
+ temp=$(mktemp -d "$BASE/tmp/run.XXXXXXXX"); stamp=$(date +%Y%m%d-%H%M%S); err="$temp/error"
+ identity=$(SSHPASS="$password" sshpass -e ssh -p "$port" -o ConnectTimeout=15 -o ConnectionAttempts=1 -o StrictHostKeyChecking=accept-new "$username@$ip" ':put [/system identity get name]' </dev/null 2>"$err" | tr -d '\r') || true
+ if [[ -z "$identity" ]]; then reason='Falha ao obter Identity'; step='identity'; failed=1; fi
+ if ((failed==0)); then safe_id=$(echo "$identity" | tr ' /\\:' '____'); remote="routeros-$safe_id-$stamp"; local_rsc="$temp/$remote.rsc"; dest="$BASE/backups/$client/$name"; mkdir -p "$dest"; chmod 700 "$dest"; zipfile="$dest/$remote.zip"; fi
+ if ((failed==0)); then
+  echo "Identity: $identity"; echo 'Gerando export RouterOS...'
+  if ! SSHPASS="$password" sshpass -e ssh -p "$port" -o ConnectTimeout=15 -o ConnectionAttempts=1 -o StrictHostKeyChecking=accept-new "$username@$ip" "/export hide-sensitive file=\"$remote\"" </dev/null >/dev/null 2>"$err"; then
+   echo 'Tentando export sem hide-sensitive...'
+   SSHPASS="$password" sshpass -e ssh -p "$port" -o ConnectTimeout=15 -o ConnectionAttempts=1 -o StrictHostKeyChecking=accept-new "$username@$ip" "/export file=\"$remote\"" </dev/null >/dev/null 2>"$err" || { reason='Falha ao gerar export'; step='export'; failed=1; }
+  fi
  fi
- echo "$(date -Is) FALHA $client/$name etapa=$step motivo=$reason" >> "$BASE/logs/execucoes.log"
- if ! notify "$client" "🔴 BACKUP FALHOU | Cliente: $client | Equipamento: $name | IP: $ip | Porta: $port | Etapa: $step | Motivo: $reason | $(date -Is)"; then echo "$(date -Is) AVISO Falha ao notificar Telegram $client/$name" >> "$BASE/logs/execucoes.log"; fi
- echo "Falha: $reason (etapa $step)"; rm -rf -- "$temp"; return 1
+ if ((failed==0)); then sleep 2; echo 'Baixando export...'; SSHPASS="$password" sshpass -e scp -P "$port" -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new "$username@$ip:$remote.rsc" "$local_rsc" >/dev/null 2>"$err" || { reason='Falha no SCP do export'; step='download'; failed=1; }; fi
+ if ((failed==0)) && [[ ! -s "$local_rsc" ]]; then reason='Arquivo de export vazio'; step='validacao'; failed=1; fi
+ if ((failed==0)); then SSHPASS="$password" sshpass -e ssh -p "$port" -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new "$username@$ip" "/file remove \"$remote.rsc\"" </dev/null >/dev/null 2>&1 || true; (cd "$temp" && zip -q "$zipfile" "$(basename "$local_rsc")") || { reason='Falha ao compactar ZIP'; step='compactacao'; failed=1; }; fi
+ if ((failed==0)); then
+  size=$(du -h "$zipfile" | awk '{print $1}')
+  caption="💾 ROUTEROS - $identity
+📅 Backup: $(date +%d/%m/%Y)
+🕐 Horário: $(date +%H:%M:%S)
+📦 Arquivo: $(basename "$zipfile")
+📊 Tamanho: $size"
+  echo "$(date -Is) OK $client/$name $zipfile" >> "$BASE/logs/execucoes.log"
+  if notify_document "$client" "$zipfile" "$caption"; then echo "Backup RouterOS enviado: $(basename "$zipfile")"; else echo 'Backup salvo localmente, mas Telegram recusou o arquivo.'; echo "$(date -Is) AVISO Telegram $client/$name" >> "$BASE/logs/execucoes.log"; fi
+  rm -rf -- "$temp"; return 0
+ fi
+ echo "$(date -Is) FALHA $client/$name etapa=$step motivo=$reason" >> "$BASE/logs/execucoes.log"; notify "$client" "🔴 BACKUP FALHOU | Cliente: $client | Equipamento: $name | IP: $ip | Etapa: $step | Motivo: $reason" || true; echo "Falha: $reason (etapa $step)"; [[ -s "$err" ]] && tail -n 4 "$err"; rm -rf -- "$temp"; return 1
 }
-# Interface interativa dialog (fallback automatico para terminal simples).
-# Interface V3 em terminal texto. Dialog desativado por decisao de projeto.
-HAS_DIALOG=0
+
 ui_message(){
  if (( HAS_DIALOG )); then dialog --backtitle 'BACKUP MANAGER V3 BETA' --title 'Aviso' --msgbox "$1" 9 65; else printf '%s\n' "$1"; fi
 }
@@ -638,7 +642,7 @@ config_menu(){
   read_key opt 'Opcao: '
   case "$opt" in
    1) echo; echo "Base: $BASE"; echo "Clientes: $BASE/clientes"; echo "Backups: $BASE/backups"; echo "Logs: $BASE/logs"; echo "Temporarios: $BASE/tmp";;
-   2) echo; for x in bash ssh scp sshpass curl jq flock tar; do command -v "$x" >/dev/null 2>&1 && echo "OK   $x" || echo "FALTA $x"; done;;
+   2) echo; for x in bash ssh scp sshpass curl jq flock zip; do command -v "$x" >/dev/null 2>&1 && echo "OK   $x" || echo "FALTA $x"; done;;
    0) return;; *) echo 'Opcao invalida.';;
   esac
  done
