@@ -260,7 +260,9 @@ notify(){
  curl -fsS --connect-timeout 10 --max-time 30 -X POST "https://api.telegram.org/bot${token}/sendMessage" --data-urlencode "chat_id=$chat" --data-urlencode "text=$msg" | jq -e '.ok==true' >/dev/null
 }
 run_backup(){
- local client="$1" name="$2" file="$BASE/clientes/$client/$name.json"
+ local client name file
+ client="${1:-}"; name="${2:-}"
+ file="$BASE/clientes/$client/$name.json"
  valid_id "$client" && valid_id "$name" && [[ -f "$file" ]] || { echo 'Dispositivo nao encontrado'; return 1; }
  local ip port username password lock temp stamp basename remote localfile dest err rc step reason
  ip=$(jq -r '.ip' "$file"); port=$(jq -r '.port' "$file"); username=$(jq -r '.username' "$file"); password=$(jq -r '.password' "$file")
