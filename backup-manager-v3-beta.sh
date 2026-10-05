@@ -208,8 +208,8 @@ run_backup(){
  echo "Falha: $reason (etapa $step)"; rm -rf -- "$temp"; return 1
 }
 # Interface interativa dialog (fallback automatico para terminal simples).
+# Interface V3 em terminal texto. Dialog desativado por decisao de projeto.
 HAS_DIALOG=0
-if [[ -t 0 && -t 1 ]] && command -v dialog >/dev/null 2>&1; then HAS_DIALOG=1; fi
 ui_message(){
  if (( HAS_DIALOG )); then dialog --backtitle 'BACKUP MANAGER V3 BETA' --title 'Aviso' --msgbox "$1" 9 65; else printf '%s\n' "$1"; fi
 }
