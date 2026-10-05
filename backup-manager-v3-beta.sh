@@ -616,18 +616,37 @@ manual_backup_menu(){
  run_backup "$c" "$SELECTED_DEVICE" || true
  echo; echo '[ENTER] Voltar'; read -r
 }
+schedule_dir(){ mkdir -p "$BASE/config/agendamentos"; chmod 700 "$BASE/config/agendamentos"; }
+schedule_install_cron(){
+ local id="$1" client="$2" device="$3" hour="$4" minute="$5" cron="/etc/cron.d/backup-manager-v3-$id"
+ printf "# Backup Manager V3 - %s\n%s %s * * * root %q run %q %q >> %q 2>&1\n" "$id" "$minute" "$hour" "$0" "$client" "$device" "$BASE/logs/cron-$id.log" > "$cron"
+ chmod 644 "$cron"
+}
+schedule_add(){
+ local client device tm minute hh id cfg
+ select_client || return; client="$SELECTED_CLIENT"; select_device_text "$client" || return; device="$SELECTED_DEVICE"
+ echo; echo "Horario diario HH:MM. Digite 0 para cancelar."; read -r -p "Horario: " tm; [[ "$tm" == 0 ]] && return
+ [[ "$tm" =~ ^([01][0-9]|2[0-3]):([0-5][0-9])$ ]] || { status_fail "Horario invalido. Exemplo: 06:30"; return; }
+ hh="${BASH_REMATCH[1]}"; minute="${BASH_REMATCH[2]}"; id="$client-$device"; schedule_dir; cfg="$BASE/config/agendamentos/$id.json"
+ jq -n --arg id "$id" --arg client "$client" --arg device "$device" --arg hour "$hh" --arg minute "$minute" '{id:$id,client:$client,device:$device,hour:$hour,minute:$minute,enabled:true}' > "$cfg"; chmod 600 "$cfg"
+ schedule_install_cron "$id" "$client" "$device" "$hh" "$minute"; status_ok "Agendamento criado: $client / $device diariamente as $hh:$minute"
+}
+schedule_list(){
+ local f n=0; schedule_dir; echo; echo "================ AGENDAMENTOS V3 ================"; printf "%-4s %-16s %-22s %-8s\n" "N" "CLIENTE" "EQUIPAMENTO" "HORARIO"
+ for f in "$BASE/config/agendamentos/"*.json; do [[ -f "$f" ]] || continue; ((++n)); printf "%-4s %-16s %-22s %s:%s\n" "$n" "$(jq -r .client "$f")" "$(jq -r .device "$f")" "$(jq -r .hour "$f")" "$(jq -r .minute "$f")"; done
+ ((n)) || echo "Nenhum agendamento V3 cadastrado."; echo "=================================================="
+}
+schedule_delete(){
+ local files=() f i=0 opt id; schedule_dir; for f in "$BASE/config/agendamentos/"*.json; do [[ -f "$f" ]] && files+=("$f"); done
+ ((${#files[@]})) || { echo "Nenhum agendamento V3 cadastrado."; return; }; echo; echo "========== EXCLUIR AGENDAMENTO =========="
+ for f in "${files[@]}"; do ((++i)); echo "[$i] $(jq -r '.client+" / "+.device+" - "+.hour+":"+(.minute|tostring)' "$f")"; done
+ echo "[0] Voltar"; read -r -p "Numero: " opt; [[ "$opt" == 0 ]] && return
+ [[ "$opt" =~ ^[0-9]+$ ]] && ((opt>=1 && opt<=${#files[@]})) || { echo "Opcao invalida."; return; }
+ f="${files[opt-1]}"; id=$(jq -r .id "$f"); rm -f "/etc/cron.d/backup-manager-v3-$id" "$f"; status_ok "Agendamento $id excluido."
+}
 schedules_menu(){
- local opt
- while :; do
-  echo; echo '========== AGENDAMENTOS =========='
-  echo '[1] Listar agendamentos V3'; echo '[2] Informacoes / seguranca'; echo '[0] Voltar'
-  read_key opt 'Opcao: '
-  case "$opt" in
-   1) echo; echo 'Nenhum agendamento V3 criado ainda.'; echo 'Os agendamentos V2 existentes permanecem inalterados.';;
-   2) echo; echo 'A criacao/alteracao automatica de cron sera liberada apos validarmos o backup manual V3.'; echo 'Nenhum cron V2 sera alterado ou removido automaticamente.';;
-   0) return;; *) echo 'Opcao invalida.';;
-  esac
- done
+ local opt; while :; do echo; echo "========== AGENDAMENTOS =========="; echo "[1] Listar agendamentos V3"; echo "[2] Criar agendamento diario"; echo "[3] Excluir agendamento"; echo "[4] Informacoes / seguranca"; echo "[0] Voltar"; read_key opt "Opcao: "; case "$opt" in
+ 1) schedule_list;; 2) schedule_add;; 3) schedule_delete;; 4) echo; echo "Os agendamentos V3 usam arquivos proprios em /etc/cron.d/backup-manager-v3-*."; echo "Os crons e scripts do V2 NAO sao alterados.";; 0) return;; *) echo "Opcao invalida.";; esac; done
 }
 logs_menu(){
  local opt
