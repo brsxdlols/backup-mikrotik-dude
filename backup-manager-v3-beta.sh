@@ -241,7 +241,7 @@ add_device(){
    read -r -p 'Usuario: ' username
    read_secret password
    result=$(SSHPASS="$password" sshpass -e ssh -o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -p "$port" -- "$username@$ip" ':put "OK"' 2>&1) && rc=0 || rc=$?
-   ((rc==0)) && [[ "$result" == *OK* ]] || { echo "Falha na conexao (codigo $rc): $result"; return 1; }
+   if ! { ((rc==0)) && [[ "$result" == *OK* ]]; }; then echo "Falha na conexao (codigo $rc): $result"; echo; echo "[ENTER] Voltar ao cliente"; read -r; return; fi
  fi
 
  file="$BASE/clientes/$id/$name.json"
