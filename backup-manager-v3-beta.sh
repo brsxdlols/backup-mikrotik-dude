@@ -635,7 +635,14 @@ schedule_add(){
  jq -n --arg id "$id" --arg client "$client" --arg device "$device" --arg hour "$hh" --arg minute "$minute" '{id:$id,client:$client,device:$device,hour:$hour,minute:$minute,enabled:true}' > "$cfg"; chmod 600 "$cfg"; schedule_install_cron "$id" "$client" "$device" "$hh" "$minute"
  [[ "$device" == "__ALL__" ]] && label="TODOS" || label="$device"; status_ok "Agendamento criado: $client / $label diariamente as $hh:$minute"
 }
-schedule_files(){ SCHEDULE_FILES=(); local f; schedule_dir; for f in "$BASE/config/agendamentos/"*.json; do [[ -f "$f" ]] && SCHEDULE_FILES+=("$f"); done; }
+schedule_files(){
+ SCHEDULE_FILES=(); local f
+ schedule_dir
+ for f in "$BASE/config/agendamentos/"*.json; do
+  if [[ -f "$f" ]]; then SCHEDULE_FILES+=("$f"); fi
+ done
+ return 0
+}
 schedule_list(){
  local f n=0 dev; schedule_files; echo; echo "================ AGENDAMENTOS V3 ================"; printf "%-4s %-16s %-22s %-8s\n" "N" "CLIENTE" "EQUIPAMENTO" "HORARIO"
  for f in "${SCHEDULE_FILES[@]}"; do ((++n)); dev=$(jq -r .device "$f"); [[ "$dev" == "__ALL__" ]] && dev="TODOS"; printf "%-4s %-16s %-22s %s:%s\n" "$n" "$(jq -r .client "$f")" "$dev" "$(jq -r .hour "$f")" "$(jq -r .minute "$f")"; done
