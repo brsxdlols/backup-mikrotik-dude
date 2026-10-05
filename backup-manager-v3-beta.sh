@@ -477,18 +477,70 @@ clients_menu(){
   case "$opt" in 1) show_clients;; 2) add_client;; 3) edit_client;; 4) delete_client;; 0) return;; *) echo 'Opcao invalida';; esac
  done
 }
+manual_backup_menu(){
+ local c
+ select_client || return; c="$SELECTED_CLIENT"
+ select_device_text "$c" || return
+ echo; echo '========== BACKUP MANUAL =========='
+ echo "Cliente: $c"; echo "Equipamento: $SELECTED_DEVICE"
+ echo '[1] Executar backup agora'; echo '[0] Voltar'
+ local opt; read_key opt 'Opcao: '
+ [[ "$opt" == 1 ]] || return
+ run_backup "$c" "$SELECTED_DEVICE" || true
+ echo; echo '[ENTER] Voltar'; read -r
+}
+schedules_menu(){
+ local opt
+ while :; do
+  echo; echo '========== AGENDAMENTOS =========='
+  echo '[1] Listar agendamentos V3'; echo '[2] Informacoes / seguranca'; echo '[0] Voltar'
+  read_key opt 'Opcao: '
+  case "$opt" in
+   1) echo; echo 'Nenhum agendamento V3 criado ainda.'; echo 'Os agendamentos V2 existentes permanecem inalterados.';;
+   2) echo; echo 'A criacao/alteracao automatica de cron sera liberada apos validarmos o backup manual V3.'; echo 'Nenhum cron V2 sera alterado ou removido automaticamente.';;
+   0) return;; *) echo 'Opcao invalida.';;
+  esac
+ done
+}
+logs_menu(){
+ local opt
+ while :; do
+  echo; echo '========== LOGS =========='
+  echo '[1] Ultimas 30 execucoes'; echo '[2] Ultimas falhas'; echo '[3] Ultimos sucessos'; echo '[0] Voltar'
+  read_key opt 'Opcao: '
+  case "$opt" in
+   1) echo; tail -n 30 "$BASE/logs/execucoes.log" 2>/dev/null || echo 'Nenhum log ainda.';;
+   2) echo; grep ' FALHA ' "$BASE/logs/execucoes.log" 2>/dev/null | tail -n 30 || true;;
+   3) echo; grep ' OK ' "$BASE/logs/execucoes.log" 2>/dev/null | tail -n 30 || true;;
+   0) return;; *) echo 'Opcao invalida.';;
+  esac
+ done
+}
+config_menu(){
+ local opt
+ while :; do
+  echo; echo '========== CONFIGURACOES =========='
+  echo '[1] Ver diretorios e ambiente'; echo '[2] Ver dependencias'; echo '[0] Voltar'
+  read_key opt 'Opcao: '
+  case "$opt" in
+   1) echo; echo "Base: $BASE"; echo "Clientes: $BASE/clientes"; echo "Backups: $BASE/backups"; echo "Logs: $BASE/logs"; echo "Temporarios: $BASE/tmp";;
+   2) echo; for x in bash ssh scp sshpass curl jq flock tar; do command -v "$x" >/dev/null 2>&1 && echo "OK   $x" || echo "FALTA $x"; done;;
+   0) return;; *) echo 'Opcao invalida.';;
+  esac
+ done
+}
 menu(){
- local opt c d
+ local opt
  while :; do
   echo; echo '========================================'; echo '       BACKUP MANAGER V3 BETA'; echo '========================================'; echo '[1] Gerenciar clientes'; echo '[2] Gerenciar equipamentos'; echo '[3] Executar backup manual'; echo '[4] Agendamentos'; echo '[5] Consultar logs'; echo '[6] Configuracoes'; echo '[0] Sair'; echo '========================================'
   read_key opt 'Escolha uma opcao: '
   case "$opt" in
    1) clients_menu;;
    2) devices_menu;;
-   3) select_client || continue; c="$SELECTED_CLIENT"; read -r -p 'Nome do dispositivo: ' d; run_backup "$c" "$d" || true;;
-   4) echo 'Agendamentos: modulo ainda nao implementado nesta beta.';;
-   5) tail -n 30 "$BASE/logs/execucoes.log" 2>/dev/null || echo 'Nenhum log ainda.';;
-   6) echo 'Configuracoes: modulo ainda nao implementado nesta beta.';;
+   3) manual_backup_menu;;
+   4) schedules_menu;;
+   5) logs_menu;;
+   6) config_menu;;
    0) break;; *) echo 'Opcao invalida';;
   esac
  done
