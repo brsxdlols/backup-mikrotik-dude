@@ -282,7 +282,7 @@ run_backup(){
  if ((failed==0)); then safe_id=$(echo "$identity" | tr ' /\\:' '____'); remote="routeros-$safe_id-$stamp"; local_rsc="$temp/$remote.rsc"; local_backup="$temp/$remote.backup"; dest="$BASE/backups/$client/$name"; mkdir -p "$dest"; chmod 700 "$dest"; zipfile="$dest/$remote.zip"; fi
  if ((failed==0)); then
   echo "Identity: $identity"; echo 'Gerando export RouterOS...'
-  if ! SSHPASS="$password" sshpass -e ssh -p "$port" -o ConnectTimeout=15 -o ConnectionAttempts=1 -o StrictHostKeyChecking=accept-new "$username@$ip" "/export hide-sensitive file=\"$remote\"" </dev/null >/dev/null 2>"$err"; then
+  if ! SSHPASS="$password" sshpass -e ssh -p "$port" -o ConnectTimeout=15 -o ConnectionAttempts=1 -o StrictHostKeyChecking=accept-new "$username@$ip" "/export show-sensitive file=\"$remote\"" </dev/null >/dev/null 2>"$err"; then
    echo 'Tentando export sem hide-sensitive...'
    SSHPASS="$password" sshpass -e ssh -p "$port" -o ConnectTimeout=15 -o ConnectionAttempts=1 -o StrictHostKeyChecking=accept-new "$username@$ip" "/export file=\"$remote\"" </dev/null >/dev/null 2>"$err" || { reason='Falha ao gerar export'; step='export'; failed=1; }
   fi
