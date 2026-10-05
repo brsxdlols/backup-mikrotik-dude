@@ -92,8 +92,34 @@ show_clients(){
  echo '--------------------------------------------------------------'
  printf ' Total de clientes: %d\n' "${#clients[@]}"
  echo '=============================================================='
- echo '[ENTER] Voltar ao menu principal'
- read -r
+ if (( ${#clients[@]} == 0 )); then
+   echo '[ENTER] Voltar'
+   read -r
+   return
+ fi
+ echo
+ echo 'Digite o numero do cliente para testar o Telegram.'
+ echo '[0] Voltar'
+ local choice selected
+ while :; do
+   read -r -p 'Cliente: ' choice
+   [[ "$choice" == 0 ]] && return
+   if [[ "$choice" =~ ^[0-9]+$ ]] && ((choice>=1 && choice<=${#clients[@]})); then
+     selected="${clients[choice-1]}"
+     echo
+     echo "Testando Telegram do cliente $selected..."
+     if notify "$selected" "TESTE BACKUP MANAGER V3 | Cliente: $selected | Telegram funcionando corretamente."; then
+       echo "OK - Telegram do cliente $selected funcionando."
+     else
+       echo "FALHA - Telegram do cliente $selected nao respondeu corretamente."
+     fi
+     echo
+     echo '[ENTER] Voltar para a lista'
+     read -r
+     return
+   fi
+   echo 'Cliente invalido.'
+ done
 }
 select_client(){
  local -a clients=()
@@ -336,9 +362,9 @@ delete_client(){
 clients_menu(){
  local opt
  while :; do
-  echo; echo '========== GERENCIAR CLIENTES =========='; echo '[1] Listar clientes'; echo '[2] Adicionar cliente'; echo '[3] Alterar cliente'; echo '[4] Excluir cliente'; echo '[5] Testar Telegram do cliente'; echo '[0] Voltar'
+  echo; echo '========== GERENCIAR CLIENTES =========='; echo '[1] Listar clientes / Testar Telegram'; echo '[2] Adicionar cliente'; echo '[3] Alterar cliente'; echo '[4] Excluir cliente'; echo '[0] Voltar'
   read_key opt 'Opcao: '
-  case "$opt" in 1) show_clients;; 2) add_client;; 3) edit_client;; 4) delete_client;; 5) test_client_telegram;; 0) return;; *) echo 'Opcao invalida';; esac
+  case "$opt" in 1) show_clients;; 2) add_client;; 3) edit_client;; 4) delete_client;; 0) return;; *) echo 'Opcao invalida';; esac
  done
 }
 menu(){
