@@ -469,12 +469,79 @@ devices_menu(){
   esac
  done
 }
-clients_menu(){
- local opt
+list_devices_for_client(){
+ local id="$1" f n=0 name ip port user
+ echo; echo "================ EQUIPAMENTOS - CLIENTE: $id ================"
+ printf ' %-4s %-22s %-18s %-7s %s\n' 'N' 'EQUIPAMENTO' 'IP/HOST' 'PORTA' 'USUARIO'
+ echo '--------------------------------------------------------------------------'
+ for f in "$BASE/clientes/$id/"*.json; do [[ -f "$f" && "${f##*/}" != telegram.json ]] || continue; ((++n)); name="${f##*/}"; name="${name%.json}"; ip=$(jq -r '.ip // "-"' "$f"); port=$(jq -r '.port // "-"' "$f"); user=$(jq -r '.username // "-"' "$f"); printf ' %-4d %-22.22s %-18.18s %-7s %s\n' "$n" "$name" "$ip" "$port" "$user"; done
+ ((n)) || echo ' Nenhum equipamento cadastrado.'; echo '--------------------------------------------------------------------------'; echo '[ENTER] Voltar'; read -r
+}
+add_device_for_client(){ local save="$SELECTED_CLIENT"; SELECTED_CLIENT="$1"; add_device_skip_select "$1"; SELECTED_CLIENT="$save"; }
+add_device_skip_select(){
+ local id="$1" name ip port username password file result rc
+ echo; echo "========== ADICIONAR MIKROTIK - $id =========="; echo 'Digite 0 em qualquer campo para cancelar.'
+ read -r -p 'Nome do dispositivo: ' name; [[ "$name" == 0 ]] && return; valid_id "$name" || { echo 'Nome invalido'; return; }
+ file="$BASE/clientes/$id/$name.json"; [[ ! -e "$file" ]] || { echo 'Dispositivo ja cadastrado'; return; }
+ read -r -p 'IP ou hostname: ' ip; [[ "$ip" == 0 ]] && return
+ read -r -p 'Porta SSH [22]: ' port; [[ "$port" == 0 ]] && return; port=${port:-22}
+ read -r -p 'Usuario: ' username; [[ "$username" == 0 ]] && return
+ read -r -s -p 'Senha SSH [0 cancela]: ' password; echo; [[ "$password" == 0 ]] && return
+ result=$(SSHPASS="$password" sshpass -e ssh -o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -p "$port" -- "$username@$ip" ':put "OK"' 2>&1) && rc=0 || rc=$?
+ ((rc==0)) && [[ "$result" == *OK* ]] || { echo "Falha na conexao (codigo $rc): $result"; return 1; }
+ jq -n --arg name "$name" --arg ip "$ip" --arg port "$port" --arg username "$username" --arg password "$password" '{name:$name,ip:$ip,port:$port,username:$username,password:$password,type:"mikrotik"}' > "$file" && chmod 600 "$file"
+ echo "MikroTik $name cadastrado com sucesso em $id."
+}
+edit_device_for_client(){ local id="$1"; echo; select_device_text "$id" || return; local name="$SELECTED_DEVICE" file="$BASE/clientes/$id/$SELECTED_DEVICE.json" opt v; while :; do echo; echo "========== ALTERAR EQUIPAMENTO: $name =========="; echo '[1] IP/hostname'; echo '[2] Porta SSH'; echo '[3] Usuario'; echo '[4] Senha'; echo '[5] Testar conexao'; echo '[0] Voltar'; read_key opt 'Opcao: '; case "$opt" in 1) read -r -p 'Novo IP/hostname [0 cancela]: ' v; [[ "$v" == 0 ]] || jq --arg v "$v" '.ip=$v' "$file" > "$BASE/tmp/dev.$$" && mv "$BASE/tmp/dev.$$" "$file";; 2) read -r -p 'Nova porta [0 cancela]: ' v; [[ "$v" == 0 ]] || { jq --arg v "$v" '.port=$v' "$file" > "$BASE/tmp/dev.$$" && mv "$BASE/tmp/dev.$$" "$file"; };; 3) read -r -p 'Novo usuario [0 cancela]: ' v; [[ "$v" == 0 ]] || { jq --arg v "$v" '.username=$v' "$file" > "$BASE/tmp/dev.$$" && mv "$BASE/tmp/dev.$$" "$file"; };; 4) read -r -s -p 'Nova senha [0 cancela]: ' v; echo; [[ "$v" == 0 ]] || { jq --arg v "$v" '.password=$v' "$file" > "$BASE/tmp/dev.$$" && mv "$BASE/tmp/dev.$$" "$file"; };; 5) test_device_connection "$id" "$name" || true;; 0) chmod 600 "$file"; return;; esac; chmod 600 "$file"; done; }
+delete_device_for_client(){ local id="$1" name file confirm; select_device_text "$id" || return; name="$SELECTED_DEVICE"; file="$BASE/clientes/$id/$name.json"; echo "Equipamento: $name"; echo 'Backups historicos serao PRESERVADOS.'; read -r -p 'Digite EXCLUIR para confirmar: ' confirm; [[ "$confirm" == EXCLUIR ]] || return; rm -f -- "$file"; echo 'Equipamento removido.'; }
+edit_client_direct(){ local id="$1"; SELECTED_CLIENT="$id"; echo "Use o menu principal de Alterar cliente nesta beta para nome/Telegram."; }
+manage_selected_client(){
+ local id="$1" opt cid
  while :; do
-  echo; echo '========== GERENCIAR CLIENTES =========='; echo '[1] Listar clientes / Testar Telegram'; echo '[2] Adicionar cliente'; echo '[3] Alterar cliente'; echo '[4] Excluir cliente'; echo '[0] Voltar'
+  echo; echo "========== CLIENTE: $id =========="
+  echo '[1] Listar equipamentos'
+  echo '[2] Adicionar MikroTik'
+  echo '[3] Alterar equipamento'
+  echo '[4] Excluir equipamento'
+  echo '[5] Testar conexao SSH'
+  echo '[6] Testar / corrigir Telegram'
+  echo '[7] Alterar dados do cliente'
+  echo '[0] Voltar'
   read_key opt 'Opcao: '
-  case "$opt" in 1) show_clients;; 2) add_client;; 3) edit_client;; 4) delete_client;; 0) return;; *) echo 'Opcao invalida';; esac
+  case "$opt" in
+   1)
+    SELECTED_CLIENT="$id"; list_devices_for_client "$id";;
+   2)
+    SELECTED_CLIENT="$id"; add_device_for_client "$id";;
+   3)
+    edit_device_for_client "$id";;
+   4)
+    delete_device_for_client "$id";;
+   5)
+    select_device_text "$id" || continue; test_device_connection "$id" "$SELECTED_DEVICE" || true;;
+   6)
+    if notify "$id" "TESTE BACKUP MANAGER V3 | Cliente: $id | Telegram funcionando corretamente."; then echo 'OK - Telegram funcionando.'; else echo 'FALHA - use Alterar dados do cliente para corrigir Bot Token/Chat ID.'; fi;;
+   7)
+    SELECTED_CLIENT="$id"; edit_client_direct "$id";;
+   0) return;; *) echo 'Opcao invalida.';;
+  esac
+ done
+}
+clients_menu(){
+ local opt id
+ while :; do
+  echo; echo '========== GERENCIAR CLIENTES =========='
+  echo '[1] Selecionar cliente / Gerenciar'
+  echo '[2] Listar clientes / Testar Telegram'
+  echo '[3] Adicionar cliente'
+  echo '[4] Alterar cliente'
+  echo '[5] Excluir cliente'
+  echo '[0] Voltar'
+  read_key opt 'Opcao: '
+  case "$opt" in
+   1) select_client || continue; id="$SELECTED_CLIENT"; manage_selected_client "$id";;
+   2) show_clients;; 3) add_client;; 4) edit_client;; 5) delete_client;; 0) return;; *) echo 'Opcao invalida';;
+  esac
  done
 }
 manual_backup_menu(){
@@ -532,15 +599,14 @@ config_menu(){
 menu(){
  local opt
  while :; do
-  echo; echo '========================================'; echo '       BACKUP MANAGER V3 BETA'; echo '========================================'; echo '[1] Gerenciar clientes'; echo '[2] Gerenciar equipamentos'; echo '[3] Executar backup manual'; echo '[4] Agendamentos'; echo '[5] Consultar logs'; echo '[6] Configuracoes'; echo '[0] Sair'; echo '========================================'
+  echo; echo '========================================'; echo '       BACKUP MANAGER V3 BETA'; echo '========================================'; echo '[1] Gerenciar clientes'; echo '[2] Executar backup manual'; echo '[3] Agendamentos'; echo '[4] Consultar logs'; echo '[5] Configuracoes'; echo '[0] Sair'; echo '========================================'
   read_key opt 'Escolha uma opcao: '
   case "$opt" in
    1) clients_menu;;
-   2) devices_menu;;
-   3) manual_backup_menu;;
-   4) schedules_menu;;
-   5) logs_menu;;
-   6) config_menu;;
+   2) manual_backup_menu;;
+   3) schedules_menu;;
+   4) logs_menu;;
+   5) config_menu;;
    0) break;; *) echo 'Opcao invalida';;
   esac
  done
