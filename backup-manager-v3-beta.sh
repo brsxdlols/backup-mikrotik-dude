@@ -507,6 +507,24 @@ add_device_skip_select(){
 edit_device_for_client(){ local id="$1"; echo; select_device_text "$id" || return; local name="$SELECTED_DEVICE" file="$BASE/clientes/$id/$SELECTED_DEVICE.json" opt v; while :; do echo; echo "========== ALTERAR EQUIPAMENTO: $name =========="; echo '[1] IP/hostname'; echo '[2] Porta SSH'; echo '[3] Usuario'; echo '[4] Senha'; echo '[5] Testar conexao'; echo '[0] Voltar'; read_key opt 'Opcao: '; case "$opt" in 1) read -r -p 'Novo IP/hostname [0 cancela]: ' v; [[ "$v" == 0 ]] || jq --arg v "$v" '.ip=$v' "$file" > "$BASE/tmp/dev.$$" && mv "$BASE/tmp/dev.$$" "$file";; 2) read -r -p 'Nova porta [0 cancela]: ' v; [[ "$v" == 0 ]] || { jq --arg v "$v" '.port=$v' "$file" > "$BASE/tmp/dev.$$" && mv "$BASE/tmp/dev.$$" "$file"; };; 3) read -r -p 'Novo usuario [0 cancela]: ' v; [[ "$v" == 0 ]] || { jq --arg v "$v" '.username=$v' "$file" > "$BASE/tmp/dev.$$" && mv "$BASE/tmp/dev.$$" "$file"; };; 4) read -r -s -p 'Nova senha [0 cancela]: ' v; echo; [[ "$v" == 0 ]] || { jq --arg v "$v" '.password=$v' "$file" > "$BASE/tmp/dev.$$" && mv "$BASE/tmp/dev.$$" "$file"; };; 5) test_device_connection "$id" "$name" || true;; 0) chmod 600 "$file"; return;; esac; chmod 600 "$file"; done; }
 delete_device_for_client(){ local id="$1" name file confirm; select_device_text "$id" || return; name="$SELECTED_DEVICE"; file="$BASE/clientes/$id/$name.json"; echo "Equipamento: $name"; echo 'Backups historicos serao PRESERVADOS.'; read -r -p 'Digite EXCLUIR para confirmar: ' confirm; [[ "$confirm" == EXCLUIR ]] || return; rm -f -- "$file"; echo 'Equipamento removido.'; }
 edit_client_direct(){ local id="$1"; SELECTED_CLIENT="$id"; echo "Use o menu principal de Alterar cliente nesta beta para nome/Telegram."; }
+GREEN=$'\033[1;32m'; RED=$'\033[1;31m'; YELLOW=$'\033[1;33m'; CYAN=$'\033[1;36m'; RESET=$'\033[0m'
+status_ok(){ printf "%s[SUCESSO]%s %s\n" "$GREEN" "$RESET" "$*"; }
+status_fail(){ printf "%s[FALHA]%s %s\n" "$RED" "$RESET" "$*"; }
+status_info(){ printf "%s[INFO]%s %s\n" "$CYAN" "$RESET" "$*"; }
+test_all_devices(){
+ local id="$1" f name ok=0 fail=0
+ for f in "$BASE/clientes/$id/"*.json; do [[ -f "$f" && "${f##*/}" != telegram.json ]] || continue; name="${f##*/}"; name="${name%.json}"; if test_device_connection "$id" "$name"; then ((++ok)); else ((++fail)); fi; done
+ echo; status_info "Resultado: $ok OK | $fail FALHA"
+}
+backup_all_devices(){
+ local id="$1" f name ok=0 fail=0
+ for f in "$BASE/clientes/$id/"*.json; do [[ -f "$f" && "${f##*/}" != telegram.json ]] || continue; name="${f##*/}"; name="${name%.json}"; status_info "Backup: $name"; if run_backup "$id" "$name"; then status_ok "$name"; ((++ok)); else status_fail "$name"; ((++fail)); fi; done
+ echo; status_info "Backups finalizados: $ok sucesso | $fail falha"
+}
+backup_client_menu(){
+ local id="$1" opt
+ while :; do echo; echo "========== BACKUP - CLIENTE: $id =========="; echo "[1] Backup de TODOS os equipamentos"; echo "[2] Selecionar equipamento"; echo "[0] Voltar"; read_key opt "Opcao: "; case "$opt" in 1) backup_all_devices "$id"; return;; 2) select_device_text "$id" || continue; run_backup "$id" "$SELECTED_DEVICE" || true; return;; 0) return;; *) echo "Opcao invalida.";; esac; done
+}
 manage_selected_client(){
  local id="$1" opt cid
  while :; do
