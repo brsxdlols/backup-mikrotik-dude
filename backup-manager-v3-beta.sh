@@ -281,8 +281,9 @@ retry_cmd(){
  return "$rc"
 }
 run_backup(){
- local client name file ip port username password lock temp stamp identity safe_id remote local_rsc local_backup zipfile dest err step reason size caption failed=0 attempt max_attempts=3 retry_delay=8
+ local client name file ip port username password lock temp stamp identity safe_id remote local_rsc local_backup zipfile dest err step reason size caption failed=0 attempt max_attempts=3 retry_delay=8 state_dir state_file previous_state
  client="${1:-}"; name="${2:-}"; file="$BASE/clientes/$client/$name.json"
+ state_dir="$BASE/config/estado-backup"; state_file="$state_dir/$client--$name.state"; mkdir -p "$state_dir"; chmod 700 "$state_dir"; previous_state="OK"; [[ -f "$state_file" ]] && previous_state=$(cat "$state_file" 2>/dev/null || echo OK)
  valid_id "$client" && valid_id "$name" && [[ -f "$file" ]] || { echo 'Dispositivo nao encontrado'; return 1; }
  ip=$(jq -r '.ip' "$file"); port=$(jq -r '.port' "$file"); username=$(jq -r '.username' "$file"); password=$(jq -r '.password' "$file")
  [[ "$port" =~ ^[0-9]+$ ]] && ((port>=1 && port<=65535)) || { status_fail "Porta SSH invalida no cadastro de $client/$name: $port"; echo "Corrija em Gerenciar clientes > cliente > Alterar equipamento > Porta SSH."; return 1; }
@@ -322,9 +323,11 @@ run_backup(){
 📊 Tamanho: $size"
   echo "$(date -Is) OK $client/$name $zipfile" >> "$BASE/logs/execucoes.log"
   if notify_document "$client" "$zipfile" "$caption"; then echo "Backup RouterOS enviado: $(basename "$zipfile")"; else echo 'Backup salvo localmente, mas Telegram recusou o arquivo.'; echo "$(date -Is) AVISO Telegram $client/$name" >> "$BASE/logs/execucoes.log"; fi
+  if [[ "$previous_state" == "FALHA" ]]; then notify "$client" "🟢 BACKUP NORMALIZADO | Cliente: $client | Equipamento: $name | IP: $ip | Status: Backup voltou a funcionar | Data/Hora: $(date '+%d/%m/%Y %H:%M:%S')" || true; echo "$(date -Is) RECUPERADO $client/$name" >> "$BASE/logs/execucoes.log"; fi
+  printf 'OK\n' > "$state_file"; chmod 600 "$state_file"
   rm -rf -- "$temp"; return 0
  fi
- echo "$(date -Is) FALHA $client/$name etapa=$step motivo=$reason" >> "$BASE/logs/execucoes.log"; notify "$client" "🔴 BACKUP FALHOU | Cliente: $client | Equipamento: $name | IP: $ip | Etapa: $step | Motivo: $reason" || true; echo "Falha: $reason (etapa $step)"; [[ -s "$err" ]] && tail -n 4 "$err"; rm -rf -- "$temp"; return 1
+ echo "$(date -Is) FALHA $client/$name etapa=$step motivo=$reason" >> "$BASE/logs/execucoes.log"; if [[ "$previous_state" != "FALHA" ]]; then notify "$client" "🔴 BACKUP FALHOU | Cliente: $client | Equipamento: $name | IP: $ip | Etapa: $step | Motivo: $reason" || true; fi; printf 'FALHA\n' > "$state_file"; chmod 600 "$state_file"; echo "Falha: $reason (etapa $step)"; [[ -s "$err" ]] && tail -n 4 "$err"; rm -rf -- "$temp"; return 1
 }
 
 ui_message(){
