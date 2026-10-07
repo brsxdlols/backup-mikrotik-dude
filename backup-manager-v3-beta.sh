@@ -642,13 +642,14 @@ schedule_install_cron(){
  printf "# Backup Manager V3 - %s\n%s %s * * * root %s >> %q 2>&1\n" "$id" "$minute" "$hour" "$cmd" "$BASE/logs/cron-$id.log" > "$cron"; chmod 644 "$cron"
 }
 schedule_next_device_time(){
- local client="$1" count=0 f total; schedule_dir
- for f in "$BASE/config/agendamentos/"*.json; do [[ -f "$f" ]] || continue; [[ "$(jq -r '.client // ""' "$f")" == "$client" ]] || continue; ((++count)) || true; done
+ local count=0 f total; schedule_dir
+ # Sequencia GLOBAL: conta todos os agendamentos V3, independentemente do cliente.
+ for f in "$BASE/config/agendamentos/"*.json; do [[ -f "$f" ]] || continue; ((++count)) || true; done
  total=$count; SCHEDULE_HOUR=$(printf "%02d" $((2 + total / 60))); SCHEDULE_MINUTE=$(printf "%02d" $((total % 60)))
 }
 schedule_ensure_device_auto(){
  local client="$1" device="$2" id cfg; schedule_dir; id="$client-$device"; cfg="$BASE/config/agendamentos/$id.json"; [[ -f "$cfg" ]] && return 0
- schedule_next_device_time "$client"; jq -n --arg id "$id" --arg client "$client" --arg device "$device" --arg hour "$SCHEDULE_HOUR" --arg minute "$SCHEDULE_MINUTE" '{id:$id,client:$client,device:$device,hour:$hour,minute:$minute,enabled:true,automatic:true}' > "$cfg"; chmod 600 "$cfg"; schedule_install_cron "$id" "$client" "$device" "$SCHEDULE_HOUR" "$SCHEDULE_MINUTE"; status_ok "Agendamento automatico: $device diariamente as $SCHEDULE_HOUR:$SCHEDULE_MINUTE."
+ schedule_next_device_time; jq -n --arg id "$id" --arg client "$client" --arg device "$device" --arg hour "$SCHEDULE_HOUR" --arg minute "$SCHEDULE_MINUTE" '{id:$id,client:$client,device:$device,hour:$hour,minute:$minute,enabled:true,automatic:true}' > "$cfg"; chmod 600 "$cfg"; schedule_install_cron "$id" "$client" "$device" "$SCHEDULE_HOUR" "$SCHEDULE_MINUTE"; status_ok "Agendamento automatico: $device diariamente as $SCHEDULE_HOUR:$SCHEDULE_MINUTE."
 }
 schedule_files(){ SCHEDULE_FILES=(); local f; schedule_dir; for f in "$BASE/config/agendamentos/"*.json; do if [[ -f "$f" ]]; then SCHEDULE_FILES+=("$f"); fi; done; return 0; }
 schedule_sync_missing(){
